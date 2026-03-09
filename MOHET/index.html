@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>دمج الصور مع قالب</title>
+<style>
+:root {
+  --moh-green: #094239;
+  --moh-gold: #b8a678;
+  --moh-text: #3c3a3b;
+  --panel-bg: rgba(255, 255, 255, 0.9);
+}
+
+@font-face {
+  font-family: "QomraBlack";
+  src: url("fonts/itfQomraArabic-Black.otf") format("opentype");
+}
+
+@font-face {
+  font-family: "QomraRegular";
+  src: url("fonts/itfQomraArabic-Regular.otf") format("opentype");
+}
+
+@font-face {
+  font-family: "QomraLight";
+  src: url("fonts/itfQomraArabic-Light.otf") format("opentype");
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  direction: rtl;
+  text-align: center;
+  color: var(--moh-text);
+  background: #eeeadf url("images/BG.jpg") center/cover no-repeat fixed;
+  font-family: "QomraRegular", Tahoma, Arial, sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.app {
+  width: min(920px, 100%);
+  background: var(--panel-bg);
+  border: 2px solid var(--moh-green);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.25);
+  padding: 28px 24px;
+}
+
+h2 {
+  margin: 0 0 20px;
+  color: var(--moh-green);
+  font-family: "QomraBlack", Tahoma, Arial, sans-serif;
+  font-size: clamp(28px, 3vw, 40px);
+}
+
+.subtitle {
+  margin: 0 0 20px;
+  font-size: 18px;
+}
+
+input[type="file"] {
+  width: min(100%, 500px);
+  padding: 10px;
+  border: 1px solid #c9c3b2;
+  background: #fff;
+  font-family: "QomraRegular", Tahoma, Arial, sans-serif;
+}
+
+button {
+  background: var(--moh-gold);
+  color: #fff;
+  border: none;
+  width: 190px;
+  height: 50px;
+  margin-top: 14px;
+  font-size: 18px;
+  cursor: pointer;
+  font-family: "QomraLight", Tahoma, Arial, sans-serif;
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+button:hover {
+  filter: brightness(0.95);
+  transform: translateY(-1px);
+}
+
+#downloads {
+  margin-top: 24px;
+  border-top: 1px solid #ddd5c0;
+  padding-top: 18px;
+}
+
+#downloads a,
+#downloads p {
+  margin: 8px 0;
+  font-size: 18px;
+}
+
+#downloads a {
+  color: var(--moh-green);
+  text-decoration: none;
+}
+
+#downloads a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 640px) {
+  .app {
+    padding: 22px 16px;
+  }
+
+  .subtitle {
+    font-size: 16px;
+  }
+
+  button {
+    width: 100%;
+    max-width: 300px;
+  }
+}
+</style>
+</head>
+<body>
+
+<main class="app">
+  <h2>دمج الصور مع القالب الرسمي</h2>
+  <p class="subtitle">ارفع الصور (حتى 10 صور) ثم اضغط على زر المعالجة</p>
+  <p class="subtitle" style="color: brown; font-size: 18px;">شرط أن تكون الأبعاد 3:2</p>
+  <input type="file" id="upload" accept="image/*" multiple>
+  <br>
+  <button id="processBtn">معالجة وتحميل الصور</button>
+
+  <div id="downloads"></div>
+</main>
+
+<script>
+const overlaySrc = "overlay.png";
+
+document.getElementById("processBtn").addEventListener("click", processImages);
+
+async function processImages() {
+  const files = document.getElementById("upload").files;
+  const downloads = document.getElementById("downloads");
+  downloads.innerHTML = "";
+
+  if (!files || files.length === 0) {
+    alert("اختر صورًا أولًا");
+    return;
+  }
+
+  if (files.length > 10) {
+    alert("الحد الأقصى هو 10 صور");
+    return;
+  }
+
+  let overlay;
+  try {
+    overlay = await loadImage(overlaySrc);
+  } catch (err) {
+    alert("تعذر تحميل overlay.png. تأكد أنه موجود بجانب index.html خطأ برمجي");
+    return;
+  }
+
+  for (let i = 0; i < files.length; i++) {
+    try {
+      const baseSrc = await readFileAsDataURL(files[i]);
+      const baseImage = await loadImage(baseSrc);
+      const resultURL = drawMergedImage(baseImage, overlay);
+
+      const fileName = `image_${i + 1}.png`;
+      const link = document.createElement("a");
+      link.href = resultURL;
+      link.download = fileName;
+      link.textContent = `تنزيل ${fileName}`;
+      downloads.appendChild(link);
+
+      setTimeout(() => link.click(), i * 200);
+    } catch (err) {
+      const msg = document.createElement("p");
+      msg.textContent = `حدث خطأ أثناء معالجة الصورة رقم ${i + 1}`;
+      downloads.appendChild(msg);
+    }
+  }
+}
+
+function drawMergedImage(baseImage, overlay) {
+  const canvas = document.createElement("canvas");
+  canvas.width = baseImage.width;
+  canvas.height = baseImage.height;
+
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(baseImage, 0, 0);
+  ctx.drawImage(overlay, 0, 0, canvas.width, canvas.height);
+
+  return canvas.toDataURL("image/png");
+}
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target.result);
+    reader.onerror = () => reject(new Error("file_read_error"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("image_load_error"));
+    img.src = src;
+  });
+}
+</script>
+
+</body>
+</html>
