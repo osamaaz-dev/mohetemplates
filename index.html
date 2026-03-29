@@ -137,7 +137,7 @@ button:hover {
   <input type="file" id="upload" accept="image/*" multiple>
   <br>
   <button id="processBtn">معالجة وتحميل الصور</button>
-
+  <button onclick="sendToTelegram()" style="background: #0088cc;">إرسال لتلغرام</button>
   <div id="downloads"></div>
 </main>
 
@@ -220,6 +220,37 @@ function loadImage(src) {
     img.src = src;
   });
 }
+
+async function sendToTelegram() {
+  const files = document.getElementById("upload").files;
+
+  if (!files || files.length === 0) {
+    alert("اختر صور أولاً");
+    return;
+  }
+
+  const BOT_TOKEN = "8320697814:AAFUt_40RbTOchlh1YrjltRzVyp0k8IppmU";
+  const CHAT_ID = "PUT_YOUR_CHAT_ID_HERE";
+
+  for (let i = 0; i < files.length; i++) {
+    try {
+      const formData = new FormData();
+      formData.append("chat_id", CHAT_ID);
+      formData.append("photo", files[i]);
+
+      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+        method: "POST",
+        body: formData
+      });
+
+    } catch (error) {
+      console.error("خطأ في الإرسال:", error);
+    }
+  }
+
+  alert("تم إرسال الصور إلى تيليغرام");
+}
+
 </script>
 
 </body>
