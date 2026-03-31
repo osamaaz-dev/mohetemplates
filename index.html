@@ -446,11 +446,9 @@ async function deleteLastMessage() {
 }
 
 // 3. ربط الدالة بالزر (تأكد أن الـ ID في HTML هو deleteBtn)
+document.getElementById("upload").addEventListener("change", generateControls);
 document.getElementById("deleteBtn").addEventListener("click", deleteLastMessage);
 
-
-
-document.getElementById("upload").addEventListener("change", generateControls);
 
 function generateControls() {
   const files = document.getElementById("upload").files;
