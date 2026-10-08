@@ -26,6 +26,17 @@ const COVER_FORMATS = {
   portrait:  { w: 1080, h: 1440 },
 };
 
+// قياس النسخة المصغرة (تُصغَّر لاحقًا إلى عرض 770 عند الإرسال لتلغرام):
+// الأفقي كما هو، والطولي بطول إنستغرام الكامل 9:16
+const THUMB_FORMATS = {
+  landscape: { w: 1500, h: 1000, asset: 'landscape' },
+  portrait:  { w: 1080, h: 1920, asset: 'portrait916', overlay: 'templates/portrait-916.png' },
+};
+const THUMB_COVER_FORMATS = {
+  landscape: { w: 1920, h: 1080 },
+  portrait:  { w: 1080, h: 1920 },
+};
+
 const SAMPLE_TITLE = {
   kicker: 'انطلاق فعاليات',
   main: 'المؤتمر العلمي الدولي الثالث والعشرين',
@@ -45,6 +56,9 @@ const state = {
   title: { kicker: '', main: '', sub: '' },
   style: storageGet('mohe_style', 'classic'),
   textScale: parseFloat(storageGet('mohe_text_scale', '1')) || 1,
+  textPos: {},          // إزاحة العنوان لكل (اتجاه:شكل) بوحدات الغلاف: { 'portrait:card': {x, y} }
+  editText: false,      // وضع تحريك النص بالماوس
+  coverRender: null,    // آخر رسم لمعاينة الغلاف (حدود النص والإزاحة الفعلية)
   busy: false,
 };
 const ASSETS = {};
@@ -161,12 +175,13 @@ function effectiveOrient(item) {
 /* =====================================================================
    رسم الصورة العادية (صورة + قالب)
    ===================================================================== */
-function renderRegular(ctx, item, orient, s, src) {
-  const F = FORMATS[orient];
+function renderRegular(ctx, item, orient, s, src, thumb = false) {
+  const F = thumb ? THUMB_FORMATS[orient] : FORMATS[orient];
+  const overlay = ASSETS[thumb ? F.asset : orient];
   ctx.setTransform(s, 0, 0, s, 0, 0);
   ctx.clearRect(0, 0, F.w, F.h);
   drawPhoto(ctx, item, F.w, F.h, item.crop[orient], s, src);
-  ctx.drawImage(ASSETS[orient], 0, 0, F.w, F.h);
+  ctx.drawImage(overlay, 0, 0, F.w, F.h);
 }
 
 /* =====================================================================
@@ -253,6 +268,51 @@ function prepareText(ctx, title, spec, k) {
   return out;
 }
 
+/* سياق رسم الغلاف الحالي: إزاحة كتلة العنوان وحدودها (قبل الإزاحة) */
+let CUR = null;
+
+function trackBounds(x0, y0, x1, y1) {
+  if (!CUR) return;
+  const ax0 = Math.min(x0, x1);
+  const ax1 = Math.max(x0, x1);
+  const ay0 = Math.min(y0, y1);
+  const ay1 = Math.max(y0, y1);
+  const b = CUR.bounds;
+  if (!b) { CUR.bounds = { x0: ax0, y0: ay0, x1: ax1, y1: ay1 }; return; }
+  b.x0 = Math.min(b.x0, ax0);
+  b.y0 = Math.min(b.y0, ay0);
+  b.x1 = Math.max(b.x1, ax1);
+  b.y1 = Math.max(b.y1, ay1);
+}
+
+// يرسم كل ما بداخله مُزاحًا بإزاحة النص (مرة واحدة فقط حتى لو تداخل الاستدعاء)
+function withTextShift(fn) {
+  const c = CUR;
+  if (!c || c.shifted) { fn(); return; }
+  c.shifted = true;
+  c.ctx.save();
+  c.ctx.translate(c.dx, c.dy);
+  try { fn(); } finally { c.ctx.restore(); c.shifted = false; }
+}
+
+// المجال المسموح لإزاحة الكتلة بحيث تبقى داخل الغلاف (والصفر مسموح دائمًا)
+function textRange(b, W, H, margin = 24) {
+  const axis = (lo, hi) => {
+    if (lo > hi) { lo = (lo + hi) / 2; hi = lo; }
+    return [Math.min(lo, 0), Math.max(hi, 0)];
+  };
+  return { x: axis(margin - b.x0, W - margin - b.x1), y: axis(margin - b.y0, H - margin - b.y1) };
+}
+function fitTextOffset(off, b, W, H) {
+  if (!b || (!off.x && !off.y)) return off;
+  const r = textRange(b, W, H);
+  return { x: clamp(off.x, r.x[0], r.x[1]), y: clamp(off.y, r.y[0], r.y[1]) };
+}
+function textPosKey(orient, styleId) { return `${orient}:${styleId}`; }
+function getTextOffset(orient, styleId) {
+  return state.textPos[textPosKey(orient, styleId)] || { x: 0, y: 0 };
+}
+
 function drawLines(ctx, part, x, top, align, fill) {
   ctx.font = fontStr(part.weight, part.size);
   ctx.textAlign = align;
@@ -261,6 +321,9 @@ function drawLines(ctx, part, x, top, align, fill) {
     const cy = top + part.lineH * (i + 0.5) + part.size * TEXT_SHIFT;
     ctx.fillStyle = typeof fill === 'function' ? fill(cy - part.size * 0.6, cy + part.size * 0.45) : fill;
     ctx.fillText(line, x, cy);
+    const w = part.widths[i];
+    const [x0, x1] = align === 'right' ? [x - w, x] : align === 'center' ? [x - w / 2, x + w / 2] : [x, x + w];
+    trackBounds(x0, top + part.lineH * i, x1, top + part.lineH * (i + 1));
   });
 }
 
@@ -269,10 +332,12 @@ function stackHeight(els) {
   return els.reduce((sum, el, i) => sum + el.h + (i < els.length - 1 ? el.gap : 0), 0);
 }
 function runStack(els, top) {
-  let y = top;
-  els.forEach((el, i) => {
-    el.draw(y);
-    y += el.h + (i < els.length - 1 ? el.gap : 0);
+  withTextShift(() => {
+    let y = top;
+    els.forEach((el, i) => {
+      el.draw(y);
+      y += el.h + (i < els.length - 1 ? el.gap : 0);
+    });
   });
 }
 
@@ -349,6 +414,7 @@ function drawBoxedLines(env, part, xRight, top, boxFill, textFill, padX, boxH, g
     const y = top + i * (boxH + gap);
     ctx.fillStyle = typeof boxFill === 'function' ? boxFill(xRight - w, xRight) : boxFill;
     ctx.fillRect(xRight - w, y, w, boxH);
+    trackBounds(xRight - w, y, xRight, y + boxH);
     ctx.fillStyle = textFill;
     ctx.fillText(line, xRight - w / 2, y + boxH / 2 + part.size * TEXT_SHIFT);
   });
@@ -414,6 +480,7 @@ function styleBand(env) {
       ctx.fillStyle = goldH(ctx, x - bw, x);
       roundRect(ctx, x - bw, y, bw, bh, 6);
       ctx.fill();
+      trackBounds(x - bw, y, x, y + bh);
       ctx.font = fontStr(t.kicker.weight, t.kicker.size);
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -429,6 +496,7 @@ function styleBand(env) {
   if (t.sub) els.push({ h: t.sub.height, gap: 0, draw: (y) => {
     ctx.fillStyle = goldH(ctx, x - lineW, x);
     ctx.fillRect(x - lineW, y + t.sub.lineH / 2 - 3, lineW, 6);
+    trackBounds(x - lineW, y, x, y + t.sub.lineH);
     drawLines(ctx, t.sub, x - lineW - lineGap, y, 'right', '#eadfbf');
   } });
   runStack(els, H - (L ? 96 : 100) - stackHeight(els));
@@ -465,25 +533,29 @@ function styleCard(env) {
   const cTop = cBottom - ch;
   const cLeft = cRight - cw;
 
-  // زجاج: نفس الصورة مضببة داخل البطاقة
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(cLeft, cTop, cw, ch);
-  ctx.clip();
-  ctx.filter = `blur(${Math.max(1, Math.round(26 * env.s))}px)`;
-  env.photo();
-  ctx.restore();
-  shadowOn(env, 40, 0.3, 10);
-  ctx.fillStyle = rgba(DEEP, 0.8);
-  ctx.fillRect(cLeft, cTop, cw, ch);
-  shadowOff(env);
-  ctx.strokeStyle = 'rgba(234, 220, 178, 0.22)';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(cLeft + 1, cTop + 1, cw - 2, ch - 2);
-  ctx.fillStyle = goldV(ctx, cTop, cBottom);
-  ctx.fillRect(cRight - bar, cTop, bar, ch);
+  withTextShift(() => {
+    // زجاج: نفس الصورة مضببة داخل البطاقة (تُرسم في مكانها الأصلي لا مع إزاحة البطاقة)
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(cLeft, cTop, cw, ch);
+    ctx.clip();
+    if (CUR) ctx.translate(-CUR.dx, -CUR.dy);
+    ctx.filter = `blur(${Math.max(1, Math.round(26 * env.s))}px)`;
+    env.photo();
+    ctx.restore();
+    shadowOn(env, 40, 0.3, 10);
+    ctx.fillStyle = rgba(DEEP, 0.8);
+    ctx.fillRect(cLeft, cTop, cw, ch);
+    shadowOff(env);
+    ctx.strokeStyle = 'rgba(234, 220, 178, 0.22)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(cLeft + 1, cTop + 1, cw - 2, ch - 2);
+    ctx.fillStyle = goldV(ctx, cTop, cBottom);
+    ctx.fillRect(cRight - bar, cTop, bar, ch);
+    trackBounds(cLeft, cTop, cRight, cBottom);
 
-  runStack(els, cTop + padY);
+    runStack(els, cTop + padY);
+  });
 }
 
 // ٤) وسط — عنوان في المنتصف مع زخرفة ذهبية
@@ -512,6 +584,7 @@ function styleCenter(env) {
     for (const side of [-1, 1]) {
       const inner = cx + side * (half + (L ? 30 : 24));
       ctx.fillRect(Math.min(inner + side * d * 1.6, inner + side * (d * 1.6 + len)), mid - 1.5, len, 3);
+      trackBounds(inner - d, mid - d, inner + side * (d * 1.6 + len), mid + d);
       ctx.beginPath();
       ctx.moveTo(inner, mid - d);
       ctx.lineTo(inner + d, mid);
@@ -667,25 +740,42 @@ function hasTitle() {
   return Boolean(t.kicker.trim() || t.main.trim() || t.sub.trim());
 }
 
-function renderCover(ctx, item, orient, styleId, s, src) {
-  const F = COVER_FORMATS[orient];
+// يرسم الغلاف ويرجع { bounds, offset, W, H }: حدود كتلة العنوان (قبل الإزاحة) والإزاحة المطبّقة فعلًا
+function renderCover(ctx, item, orient, styleId, s, src, thumb = false) {
+  const F = (thumb ? THUMB_COVER_FORMATS : COVER_FORMATS)[orient];
   const W = F.w;
   const H = F.h;
   const crop = item.coverCrop[orient];
-  ctx.setTransform(s, 0, 0, s, 0, 0);
-  ctx.clearRect(0, 0, W, H);
-  ctx.direction = 'rtl';
-  const photo = () => drawPhoto(ctx, item, W, H, crop, s, src);
-  photo();
   const title = hasTitle() ? state.title : SAMPLE_TITLE;
-  const env = {
-    ctx, W, H, s, L: orient === 'landscape', photo,
-    text: (spec) => prepareText(ctx, title, spec, state.textScale),
-  };
   const style = STYLES.find((st) => st.id === styleId) || STYLES[0];
-  ctx.save();
-  style.draw(env);
-  ctx.restore();
+  let off = getTextOffset(orient, styleId);
+  let bounds = null;
+
+  // الدورة الثانية فقط إذا اضطررنا لتقليص الإزاحة كي يبقى النص داخل الغلاف (مثلًا بعد تكبير العنوان)
+  for (let pass = 0; pass < 2; pass++) {
+    ctx.setTransform(s, 0, 0, s, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.direction = 'rtl';
+    const photo = () => drawPhoto(ctx, item, W, H, crop, s, src);
+    photo();
+    const env = {
+      ctx, W, H, s, L: orient === 'landscape', photo,
+      text: (spec) => prepareText(ctx, title, spec, state.textScale),
+    };
+    CUR = { ctx, dx: off.x, dy: off.y, shifted: false, bounds: null };
+    ctx.save();
+    try {
+      style.draw(env);
+    } finally {
+      ctx.restore();
+      bounds = CUR.bounds;
+      CUR = null;
+    }
+    const fit = fitTextOffset(off, bounds, W, H);
+    if (fit.x === off.x && fit.y === off.y) break;
+    off = fit;
+  }
+  return { bounds, offset: off, W, H };
 }
 
 /* =====================================================================
@@ -927,10 +1017,15 @@ function attachPan(canvas, getTarget) {
     const t = getTarget();
     const rect = canvas.getBoundingClientRect();
     const k = t.W / rect.width;
-    const L = photoLayout(t.item.iw, t.item.ih, t.W, t.H, t.crop);
-    t.crop.cx -= ((e.clientX - drag.x) * k) / L.dw;
-    t.crop.cy -= ((e.clientY - drag.y) * k) / L.dh;
-    normalizeCrop(t.item, t.crop, t.W, t.H);
+    if (t.drag) {
+      // وضع تحريك النص: نمرّر مقدار السحب بوحدات الغلاف
+      t.drag((e.clientX - drag.x) * k, (e.clientY - drag.y) * k);
+    } else {
+      const L = photoLayout(t.item.iw, t.item.ih, t.W, t.H, t.crop);
+      t.crop.cx -= ((e.clientX - drag.x) * k) / L.dw;
+      t.crop.cy -= ((e.clientY - drag.y) * k) / L.dh;
+      normalizeCrop(t.item, t.crop, t.W, t.H);
+    }
     drag = { x: e.clientX, y: e.clientY };
     t.redraw();
   });
@@ -981,9 +1076,57 @@ function drawCoverPreview() {
   const cw = Math.round(F.w * s);
   const ch = Math.round(F.h * s);
   if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
-  renderCover(c.getContext('2d'), item, o, state.style, s, item.preview);
+  const ctx = c.getContext('2d');
+  const r = renderCover(ctx, item, o, state.style, s, item.preview);
+  state.coverRender = r;
+  if (state.editText && r.bounds) drawTextFrame(ctx, r, s);
   $('#coverZoom').value = item.coverCrop[o].zoom;
   $('#sampleFlag').hidden = hasTitle();
+  const moved = getTextOffset(o, state.style);
+  $('#btnTextReset').hidden = !(moved.x || moved.y);
+}
+
+// إطار منقّط حول كتلة العنوان (للمعاينة فقط، لا يدخل في الصورة المصدّرة)
+function drawTextFrame(ctx, r, s) {
+  const u = window.devicePixelRatio || 1;
+  const pad = 14;
+  const x = (r.bounds.x0 + r.offset.x - pad) * s;
+  const y = (r.bounds.y0 + r.offset.y - pad) * s;
+  const w = (r.bounds.x1 - r.bounds.x0 + pad * 2) * s;
+  const h = (r.bounds.y1 - r.bounds.y0 + pad * 2) * s;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+  ctx.lineWidth = 4 * u;
+  ctx.strokeRect(x, y, w, h);
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2 * u;
+  ctx.setLineDash([9 * u, 6 * u]);
+  ctx.strokeRect(x, y, w, h);
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#e3d4a8';
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
+  ctx.lineWidth = 1.5 * u;
+  const q = 5 * u;
+  for (const [cx, cy] of [[x, y], [x + w, y], [x, y + h], [x + w, y + h]]) {
+    ctx.fillRect(cx - q, cy - q, q * 2, q * 2);
+    ctx.strokeRect(cx - q, cy - q, q * 2, q * 2);
+  }
+  ctx.restore();
+}
+
+// يحرّك كتلة العنوان بمقدار (dx, dy) بوحدات الغلاف مع إبقائها داخل الإطار
+function moveText(orient, dx, dy) {
+  const R = state.coverRender;
+  if (!R || !R.bounds) return;
+  const range = textRange(R.bounds, R.W, R.H);
+  const next = {
+    x: clamp(R.offset.x + dx, range.x[0], range.x[1]),
+    y: clamp(R.offset.y + dy, range.y[0], range.y[1]),
+  };
+  state.textPos[textPosKey(orient, state.style)] = next;
+  R.offset = next; // حتى تتراكم الحركات قبل إعادة الرسم
 }
 
 function buildGallery() {
@@ -1076,7 +1219,27 @@ function initCoverEditor() {
     const item = coverItem();
     const o = effectiveOrient(item);
     const F = COVER_FORMATS[o];
+    if (state.editText) {
+      return { item, W: F.w, H: F.h, drag: (dx, dy) => moveText(o, dx, dy), redraw: scheduleCover, done: scheduleGallery };
+    }
     return { item, crop: item.coverCrop[o], W: F.w, H: F.h, redraw: scheduleCover, done: scheduleGallery };
+  });
+
+  const chk = $('#chkEditText');
+  chk.addEventListener('change', () => {
+    state.editText = chk.checked;
+    $('#stageCanvasWrap').classList.toggle('is-text-mode', state.editText);
+    $('#editHint').textContent = state.editText
+      ? 'اسحب النص على الصورة لتحريكه (الصورة مثبّتة الآن)'
+      : 'فعّلها ثم اسحب النص على الصورة';
+    scheduleCover();
+  });
+  $('#btnTextReset').addEventListener('click', () => {
+    const item = coverItem();
+    if (!item) return;
+    delete state.textPos[textPosKey(effectiveOrient(item), state.style)];
+    scheduleCover();
+    scheduleGallery();
   });
   // التكبير بالعجلة فقط مع Ctrl (أو قرص لوحة اللمس) حتى لا يتعارض مع تمرير الصفحة
   canvas.addEventListener('wheel', (e) => {
@@ -1167,16 +1330,19 @@ function buildOutputs() {
   return outs;
 }
 
-function renderOutput(out) {
+// thumb=true: قياس النسخة المصغرة (الطولي 1080×1920 = 9:16)
+function renderOutput(out, thumb = false) {
   const o = effectiveOrient(out.item);
-  const F = out.kind === 'cover' ? COVER_FORMATS[o] : FORMATS[o];
+  const F = out.kind === 'cover'
+    ? (thumb ? THUMB_COVER_FORMATS : COVER_FORMATS)[o]
+    : (thumb ? THUMB_FORMATS : FORMATS)[o];
   const c = document.createElement('canvas');
   c.width = F.w;
   c.height = F.h;
   const ctx = c.getContext('2d');
   ctx.imageSmoothingQuality = 'high';
-  if (out.kind === 'cover') renderCover(ctx, out.item, o, state.style, 1, out.item.img);
-  else renderRegular(ctx, out.item, o, 1, out.item.img);
+  if (out.kind === 'cover') renderCover(ctx, out.item, o, state.style, 1, out.item.img, thumb);
+  else renderRegular(ctx, out.item, o, 1, out.item.img, thumb);
   return c;
 }
 
@@ -1285,12 +1451,15 @@ async function sendAllToTelegram() {
       await sleep(20);
       const full = renderOutput(out);
       const blob = await canvasToBlob(full);
-      const thumbBlob = await canvasToBlob(makeThumb(full, CONFIG.thumbWidth), 0.9);
+      // النسخة المصغرة: الأفقي من نفس الصورة، والطولي يُعاد رسمه على قالب 9:16 كامل
+      const isPortrait = effectiveOrient(out.item) === 'portrait';
+      const thumbSource = isPortrait ? renderOutput(out, true) : full;
+      const thumbBlob = await canvasToBlob(makeThumb(thumbSource, CONFIG.thumbWidth), 0.9);
       const entry = { label: out.label, msgs: [] };
 
       const main = await sendPhoto(chatId, blob, out.file, out.caption);
       entry.msgs.push({ chat: chatId, id: main.message_id });
-      const thumb = await sendPhoto(thumbChatId, thumbBlob, out.file.replace('.jpg', '-770.jpg'), `نسخة مصغرة — ${out.label} - 770`);
+      const thumb = await sendPhoto(thumbChatId, thumbBlob, out.file.replace('.jpg', '-770.jpg'), `نسخة مصغرة — ${out.label} - 770${isPortrait ? ' (9:16)' : ''}`);
       entry.msgs.push({ chat: thumbChatId, id: thumb.message_id });
 
       batch.entries.push(entry);
@@ -1426,6 +1595,7 @@ async function loadAssets() {
   const list = {
     landscape: FORMATS.landscape.overlay,
     portrait: FORMATS.portrait.overlay,
+    portrait916: THUMB_FORMATS.portrait.overlay,
     logoWhite: 'templates/logo-white.png',
     pattern: 'templates/pattern.png',
   };
