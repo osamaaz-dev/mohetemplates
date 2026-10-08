@@ -410,6 +410,24 @@ body.is-reordering, body.is-reordering * { cursor: grabbing !important; user-sel
   border-radius: 999px;
   pointer-events: none;
 }
+/* تحرير موضع النص */
+.stage-edit {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  background: #f4f1e9;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-size: 14px;
+}
+.stage-edit:has(input:checked) { background: var(--gold-soft); border-color: var(--gold); }
+.check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 700; font-size: 15px; }
+.check input { width: 18px; height: 18px; accent-color: var(--green); cursor: pointer; }
+.stage-canvas.is-text-mode canvas { cursor: move; }
+.stage-canvas.is-text-mode canvas.is-dragging { cursor: grabbing; }
 .stage-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 12px; font-size: 14px; }
 .stage-tools .zoom { max-width: 320px; }
 
