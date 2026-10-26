@@ -6,11 +6,10 @@
 const CONFIG = {
   maxPhotos: 10,
   jpegQuality: 0.92,
-  thumbWidth: 770,
   telegram: {
     botToken: '8320697814:AAGq5UTVDyzTWnL1FmiKHomrgKst7ddVsFM',
-    chatId: '-1003557221315',     // قسم الإنتاج: الصور بالحجم الكامل
-    thumbChatId: '-5300103442',   // النسخ المصغرة بعرض 770
+    chatId: '-1003557221315',     // قسم الإنتاج: الصور بالحجم الكامل مع القالب
+    thumbChatId: '-5300103442',   // المجموعة الثانية (النسخ المصغرة): الصور بدون قالب
   },
 };
 
@@ -26,15 +25,15 @@ const COVER_FORMATS = {
   portrait:  { w: 1080, h: 1440 },
 };
 
-// قياس النسخة المصغرة (تُصغَّر لاحقًا إلى عرض 770 عند الإرسال لتلغرام):
-// الأفقي كما هو، والطولي بطول إنستغرام الكامل 9:16
+// نسخة المجموعة الثانية في تلغرام: الصورة بدون قالب.
+// الطولي 1080×1920 (9:16) يُرسل بقياسه الكامل، والأفقي يُصغَّر لعرض 770 (sendW)
 const THUMB_FORMATS = {
-  landscape: { w: 1500, h: 1000, asset: 'landscape' },
-  portrait:  { w: 1080, h: 1920, asset: 'portrait916', overlay: 'templates/portrait-916.png' },
+  landscape: { w: 1500, h: 1000, sendW: 770 },
+  portrait:  { w: 1080, h: 1920, sendW: 1080 },
 };
 const THUMB_COVER_FORMATS = {
-  landscape: { w: 1920, h: 1080 },
-  portrait:  { w: 1080, h: 1920 },
+  landscape: { w: 1920, h: 1080, sendW: 770 },
+  portrait:  { w: 1080, h: 1920, sendW: 1080 },
 };
 
 const SAMPLE_TITLE = {
@@ -175,13 +174,13 @@ function effectiveOrient(item) {
 /* =====================================================================
    رسم الصورة العادية (صورة + قالب)
    ===================================================================== */
+// thumb=true: نسخة المجموعة الثانية — الصورة وحدها بدون القالب
 function renderRegular(ctx, item, orient, s, src, thumb = false) {
   const F = thumb ? THUMB_FORMATS[orient] : FORMATS[orient];
-  const overlay = ASSETS[thumb ? F.asset : orient];
   ctx.setTransform(s, 0, 0, s, 0, 0);
   ctx.clearRect(0, 0, F.w, F.h);
   drawPhoto(ctx, item, F.w, F.h, item.crop[orient], s, src);
-  ctx.drawImage(overlay, 0, 0, F.w, F.h);
+  if (!thumb) ctx.drawImage(ASSETS[orient], 0, 0, F.w, F.h);
 }
 
 /* =====================================================================
@@ -1330,7 +1329,7 @@ function buildOutputs() {
   return outs;
 }
 
-// thumb=true: قياس النسخة المصغرة (الطولي 1080×1920 = 9:16)
+// thumb=true: نسخة المجموعة الثانية بدون قالب (الطولي 1080×1920 = 9:16)
 function renderOutput(out, thumb = false) {
   const o = effectiveOrient(out.item);
   const F = out.kind === 'cover'
@@ -1451,15 +1450,17 @@ async function sendAllToTelegram() {
       await sleep(20);
       const full = renderOutput(out);
       const blob = await canvasToBlob(full);
-      // النسخة المصغرة: الأفقي من نفس الصورة، والطولي يُعاد رسمه على قالب 9:16 كامل
-      const isPortrait = effectiveOrient(out.item) === 'portrait';
-      const thumbSource = isPortrait ? renderOutput(out, true) : full;
-      const thumbBlob = await canvasToBlob(makeThumb(thumbSource, CONFIG.thumbWidth), 0.9);
+      // المجموعة الثانية: نفس الصورة بدون قالب (الطولي 1080×1920 كامل، والأفقي بعرض 770)
+      const o = effectiveOrient(out.item);
+      const T = (out.kind === 'cover' ? THUMB_COVER_FORMATS : THUMB_FORMATS)[o];
+      const thumbCanvas = makeThumb(renderOutput(out, true), T.sendW);
+      const thumbBlob = await canvasToBlob(thumbCanvas, 0.92);
       const entry = { label: out.label, msgs: [] };
 
       const main = await sendPhoto(chatId, blob, out.file, out.caption);
       entry.msgs.push({ chat: chatId, id: main.message_id });
-      const thumb = await sendPhoto(thumbChatId, thumbBlob, out.file.replace('.jpg', '-770.jpg'), `نسخة مصغرة — ${out.label} - 770${isPortrait ? ' (9:16)' : ''}`);
+      const dims = `${thumbCanvas.width}×${thumbCanvas.height}`;
+      const thumb = await sendPhoto(thumbChatId, thumbBlob, out.file.replace('.jpg', `-${thumbCanvas.width}x${thumbCanvas.height}.jpg`), `بدون قالب — ${out.label} (${dims})`);
       entry.msgs.push({ chat: thumbChatId, id: thumb.message_id });
 
       batch.entries.push(entry);
@@ -1595,7 +1596,6 @@ async function loadAssets() {
   const list = {
     landscape: FORMATS.landscape.overlay,
     portrait: FORMATS.portrait.overlay,
-    portrait916: THUMB_FORMATS.portrait.overlay,
     logoWhite: 'templates/logo-white.png',
     pattern: 'templates/pattern.png',
   };
