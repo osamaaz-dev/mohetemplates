@@ -26,10 +26,10 @@ const COVER_FORMATS = {
 };
 
 // الغلاف الذي يُرسل للمجموعة الثانية في تلغرام، وهو أيضًا قياس معاينة الغلاف في الصفحة.
-// الطولي 1080×1350 (4:5) بقياسه الكامل، والأفقي يُصغَّر لعرض 770 (sendW)
+// الطولي 1080×1920 (9:16) بقياسه الكامل، والأفقي يُصغَّر لعرض 770 (sendW)
 const THUMB_COVER_FORMATS = {
   landscape: { w: 1920, h: 1080, sendW: 770 },
-  portrait:  { w: 1080, h: 1350, sendW: 1080 },
+  portrait:  { w: 1080, h: 1920, sendW: 1080 },
 };
 
 const SAMPLE_TITLE = {
@@ -1326,7 +1326,7 @@ function buildOutputs() {
   return outs;
 }
 
-// thumb=true (للغلاف فقط): قياس غلاف المجموعة الثانية (الطولي 1080×1350)
+// thumb=true (للغلاف فقط): قياس غلاف المجموعة الثانية (الطولي 1080×1920)
 function renderOutput(out, thumb = false) {
   const o = effectiveOrient(out.item);
   const F = out.kind === 'cover'
@@ -1453,7 +1453,7 @@ async function sendAllToTelegram() {
         const main = await sendPhoto(chatId, blob, out.file, out.caption);
         entry.msgs.push({ chat: chatId, id: main.message_id });
       }
-      // المجموعة الثانية: الغلاف فقط (الطولي 1080×1350، والأفقي بعرض 770)
+      // المجموعة الثانية: الغلاف فقط (الطولي 1080×1920، والأفقي بعرض 770)
       if (out.kind === 'cover') {
         const T = THUMB_COVER_FORMATS[effectiveOrient(out.item)];
         const thumbCanvas = makeThumb(renderOutput(out, true), T.sendW);
