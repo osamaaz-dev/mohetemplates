@@ -469,8 +469,6 @@ body.is-reordering, body.is-reordering * { cursor: grabbing !important; user-sel
 .ab-progress { height: 6px; background: rgba(255, 255, 255, 0.14); border-radius: 99px; overflow: hidden; }
 .ab-progress span { display: block; height: 100%; width: 0; background: var(--gold); border-radius: 99px; transition: width 0.25s; }
 .ab-buttons { display: flex; align-items: center; gap: 10px; }
-.ab-check { font-size: 14px; white-space: nowrap; }
-.ab-check input { accent-color: var(--gold); }
 .ab-buttons .btn { padding: 11px 20px; font-size: 16px; }
 
 /* ========= التنبيهات ========= */
@@ -507,7 +505,6 @@ body.is-reordering, body.is-reordering * { cursor: grabbing !important; user-sel
   .actionbar { inset-inline: 8px; bottom: 8px; }
   .actionbar-inner { flex-direction: column; align-items: stretch; gap: 10px; }
   .ab-buttons { flex-wrap: wrap; }
-  .ab-check { flex-basis: 100%; }
   .ab-buttons .btn { flex: 1; padding: 10px 12px; font-size: 15px; }
   .styles.is-portrait { grid-template-columns: repeat(2, 1fr); }
 }

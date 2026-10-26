@@ -9,7 +9,7 @@ const CONFIG = {
   telegram: {
     botToken: '8320697814:AAGq5UTVDyzTWnL1FmiKHomrgKst7ddVsFM',
     chatId: '-1003557221315',     // قسم الإنتاج: الصور بالحجم الكامل مع القالب
-    thumbChatId: '-5300103442',   // المجموعة الثانية (النسخ المصغرة): الصور بدون قالب
+    thumbChatId: '-5300103442',   // المجموعة الثانية (النسخ المصغرة): الصور بدون قالب كملفات، بدون الغلاف
   },
 };
 
@@ -19,17 +19,10 @@ const FORMATS = {
   portrait:  { w: 1080, h: 1440, overlay: 'templates/portrait.png',  label: 'طولي' },
 };
 
-// قياس الغلاف
+// قياس الغلاف (قياس واحد لكل اتجاه: المعاينة والتنزيل وتلغرام)
 const COVER_FORMATS = {
   landscape: { w: 1920, h: 1080 },
-  portrait:  { w: 1080, h: 1440 },
-};
-
-// الغلاف الذي يُرسل للمجموعة الثانية في تلغرام، وهو أيضًا قياس معاينة الغلاف في الصفحة.
-// الطولي 1080×1920 (9:16) بقياسه الكامل، والأفقي يُصغَّر لعرض 770 (sendW)
-const THUMB_COVER_FORMATS = {
-  landscape: { w: 1920, h: 1080, sendW: 770 },
-  portrait:  { w: 1080, h: 1920, sendW: 1080 },
+  portrait:  { w: 1080, h: 1920 },
 };
 
 const SAMPLE_TITLE = {
@@ -53,7 +46,6 @@ const state = {
   textScale: parseFloat(storageGet('mohe_text_scale', '1')) || 1,
   textPos: {},          // إزاحة العنوان لكل (اتجاه:شكل) بوحدات الغلاف: { 'portrait:card': {x, y} }
   editText: false,      // وضع تحريك النص بالماوس
-  sendCoverOriginal: false, // إرسال نسخة الغلاف الأصلية (1080×1440) لقسم الإنتاج مع الغلاف المصغر؛ الصور بالقالب تُرسل له دائمًا
   coverRender: null,    // آخر رسم لمعاينة الغلاف (حدود النص والإزاحة الفعلية)
   busy: false,
 };
@@ -171,12 +163,13 @@ function effectiveOrient(item) {
 /* =====================================================================
    رسم الصورة العادية (صورة + قالب)
    ===================================================================== */
-function renderRegular(ctx, item, orient, s, src) {
+// clean=true: الصورة وحدها بدون القالب (نسخة المجموعة الثانية)
+function renderRegular(ctx, item, orient, s, src, clean = false) {
   const F = FORMATS[orient];
   ctx.setTransform(s, 0, 0, s, 0, 0);
   ctx.clearRect(0, 0, F.w, F.h);
   drawPhoto(ctx, item, F.w, F.h, item.crop[orient], s, src);
-  ctx.drawImage(ASSETS[orient], 0, 0, F.w, F.h);
+  if (!clean) ctx.drawImage(ASSETS[orient], 0, 0, F.w, F.h);
 }
 
 /* =====================================================================
@@ -736,8 +729,8 @@ function hasTitle() {
 }
 
 // يرسم الغلاف ويرجع { bounds, offset, W, H }: حدود كتلة العنوان (قبل الإزاحة) والإزاحة المطبّقة فعلًا
-function renderCover(ctx, item, orient, styleId, s, src, thumb = false) {
-  const F = (thumb ? THUMB_COVER_FORMATS : COVER_FORMATS)[orient];
+function renderCover(ctx, item, orient, styleId, s, src) {
+  const F = COVER_FORMATS[orient];
   const W = F.w;
   const H = F.h;
   const crop = item.coverCrop[orient];
@@ -1062,7 +1055,7 @@ function drawCoverPreview() {
   const item = coverItem();
   if (!item) return;
   const o = effectiveOrient(item);
-  const F = THUMB_COVER_FORMATS[o];
+  const F = COVER_FORMATS[o];
   const c = $('#coverCanvas');
   const wrap = $('#stageCanvasWrap');
   wrap.classList.toggle('is-portrait', o === 'portrait');
@@ -1153,7 +1146,7 @@ function drawGallery() {
   const item = coverItem();
   if (!item) return;
   const o = effectiveOrient(item);
-  const F = THUMB_COVER_FORMATS[o];
+  const F = COVER_FORMATS[o];
   $('#styleGallery').classList.toggle('is-portrait', o === 'portrait');
   const s = (o === 'landscape' ? 400 : 260) / F.w;
   document.querySelectorAll('.style-opt').forEach((b) => {
@@ -1191,7 +1184,7 @@ function initCoverEditor() {
     const item = coverItem();
     if (!item) return;
     const o = effectiveOrient(item);
-    const F = THUMB_COVER_FORMATS[o];
+    const F = COVER_FORMATS[o];
     item.coverCrop[o].zoom = parseFloat(e.target.value);
     normalizeCrop(item, item.coverCrop[o], F.w, F.h);
     scheduleCover();
@@ -1213,7 +1206,7 @@ function initCoverEditor() {
   attachPan(canvas, () => {
     const item = coverItem();
     const o = effectiveOrient(item);
-    const F = THUMB_COVER_FORMATS[o];
+    const F = COVER_FORMATS[o];
     if (state.editText) {
       return { item, W: F.w, H: F.h, drag: (dx, dy) => moveText(o, dx, dy), redraw: scheduleCover, done: scheduleGallery };
     }
@@ -1242,7 +1235,7 @@ function initCoverEditor() {
     if (!item || !(e.ctrlKey || e.metaKey)) return;
     e.preventDefault();
     const o = effectiveOrient(item);
-    const F = THUMB_COVER_FORMATS[o];
+    const F = COVER_FORMATS[o];
     const crop = item.coverCrop[o];
     crop.zoom = clamp(crop.zoom * Math.exp(-e.deltaY * 0.0015), 0.5, 3);
     normalizeCrop(item, crop, F.w, F.h);
@@ -1279,13 +1272,12 @@ function refreshUI() {
   $('#coverEditor').hidden = !cover;
   if (cover) {
     const o = effectiveOrient(cover);
-    const F = THUMB_COVER_FORMATS[o];
+    const F = COVER_FORMATS[o];
     $('#coverInfo').textContent = `الصورة ${state.items.indexOf(cover) + 1} — غلاف ${FORMATS[o].label} ${F.w}×${F.h}`;
     scheduleCover();
     scheduleGallery();
   }
 
-  $('#labCoverOriginal').hidden = !cover;
   const bar = $('#actionbar');
   bar.classList.toggle('is-shown', n > 0);
   $('#abSummary').textContent = n
@@ -1326,30 +1318,17 @@ function buildOutputs() {
   return outs;
 }
 
-// thumb=true (للغلاف فقط): قياس غلاف المجموعة الثانية (الطولي 1080×1920)
-function renderOutput(out, thumb = false) {
+// clean=true (للصور فقط): بدون القالب
+function renderOutput(out, clean = false) {
   const o = effectiveOrient(out.item);
-  const F = out.kind === 'cover'
-    ? (thumb ? THUMB_COVER_FORMATS : COVER_FORMATS)[o]
-    : FORMATS[o];
+  const F = (out.kind === 'cover' ? COVER_FORMATS : FORMATS)[o];
   const c = document.createElement('canvas');
   c.width = F.w;
   c.height = F.h;
   const ctx = c.getContext('2d');
   ctx.imageSmoothingQuality = 'high';
-  if (out.kind === 'cover') renderCover(ctx, out.item, o, state.style, 1, out.item.img, thumb);
-  else renderRegular(ctx, out.item, o, 1, out.item.img);
-  return c;
-}
-
-function makeThumb(canvas, width) {
-  const k = Math.min(1, width / canvas.width);
-  const c = document.createElement('canvas');
-  c.width = Math.round(canvas.width * k);
-  c.height = Math.round(canvas.height * k);
-  const ctx = c.getContext('2d');
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(canvas, 0, 0, c.width, c.height);
+  if (out.kind === 'cover') renderCover(ctx, out.item, o, state.style, 1, out.item.img);
+  else renderRegular(ctx, out.item, o, 1, out.item.img, clean);
   return c;
 }
 
@@ -1431,10 +1410,18 @@ function sendPhoto(chatId, blob, filename, caption) {
   return tgCall('sendPhoto', fd);
 }
 
+// إرسال كملف (بدون ضغط تلغرام، بالقياس الكامل)
+function sendDocument(chatId, blob, filename, caption) {
+  const fd = new FormData();
+  fd.append('chat_id', chatId);
+  fd.append('document', blob, filename);
+  if (caption) fd.append('caption', caption.slice(0, 1000));
+  return tgCall('sendDocument', fd);
+}
+
 async function sendAllToTelegram() {
   if (state.busy || !validateBeforeExport()) return;
   const { chatId, thumbChatId } = CONFIG.telegram;
-  const withCoverOriginal = state.sendCoverOriginal;
   setBusy(true);
   const outs = buildOutputs();
   const batch = { id: Date.now(), ts: Date.now(), entries: [] };
@@ -1447,20 +1434,15 @@ async function sendAllToTelegram() {
     try {
       setStatus(`جاري إرسال ${out.label} (${i + 1} من ${outs.length})…`);
       await sleep(20);
-      // قسم الإنتاج: الصور بالقالب دائمًا؛ الغلاف الأصلي فقط إذا فعّل المستخدم الخيار
-      if (out.kind === 'photo' || withCoverOriginal) {
-        const blob = await canvasToBlob(renderOutput(out));
-        const main = await sendPhoto(chatId, blob, out.file, out.caption);
-        entry.msgs.push({ chat: chatId, id: main.message_id });
-      }
-      // المجموعة الثانية: الغلاف فقط (الطولي 1080×1920، والأفقي بعرض 770)
-      if (out.kind === 'cover') {
-        const T = THUMB_COVER_FORMATS[effectiveOrient(out.item)];
-        const thumbCanvas = makeThumb(renderOutput(out, true), T.sendW);
-        const thumbBlob = await canvasToBlob(thumbCanvas, 0.92);
-        const dims = `${thumbCanvas.width}x${thumbCanvas.height}`;
-        const thumb = await sendPhoto(thumbChatId, thumbBlob, `00-cover-${dims}.jpg`, `${out.caption} (${dims.replace('x', '×')})`);
-        entry.msgs.push({ chat: thumbChatId, id: thumb.message_id });
+      // قسم الإنتاج: كل شيء (الغلاف + الصور بالقالب) كصور
+      const blob = await canvasToBlob(renderOutput(out));
+      const main = await sendPhoto(chatId, blob, out.file, out.caption);
+      entry.msgs.push({ chat: chatId, id: main.message_id });
+      // المجموعة الثانية: الصور فقط (بدون الغلاف) بدون قالب، كملفات
+      if (out.kind === 'photo') {
+        const cleanBlob = await canvasToBlob(renderOutput(out, true));
+        const doc = await sendDocument(thumbChatId, cleanBlob, out.file, `${out.caption} — بدون قالب`);
+        entry.msgs.push({ chat: thumbChatId, id: doc.message_id });
       }
 
       batch.entries.push(entry);
@@ -1650,7 +1632,6 @@ async function init() {
   initCoverEditor();
   $('#btnDownload').addEventListener('click', downloadAll);
   $('#btnTelegram').addEventListener('click', sendAllToTelegram);
-  $('#chkCoverOriginal').addEventListener('change', (e) => { state.sendCoverOriginal = e.target.checked; });
   $('#btnClearLog').addEventListener('click', () => {
     if (!confirm('مسح السجل من هذا الجهاز؟ (الصور تبقى على تلغرام)')) return;
     writeLog([]);
