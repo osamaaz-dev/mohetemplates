@@ -25,7 +25,7 @@ const COVER_FORMATS = {
   portrait:  { w: 1080, h: 1440 },
 };
 
-// نسخة المجموعة الثانية في تلغرام: الصورة بدون قالب.
+// نسخة المجموعة الثانية في تلغرام: الصورة بدون قالب، وهي أيضًا قياس المعاينة في الصفحة.
 // الطولي 1080×1920 (9:16) يُرسل بقياسه الكامل، والأفقي يُصغَّر لعرض 770 (sendW)
 const THUMB_FORMATS = {
   landscape: { w: 1500, h: 1000, sendW: 770 },
@@ -57,6 +57,7 @@ const state = {
   textScale: parseFloat(storageGet('mohe_text_scale', '1')) || 1,
   textPos: {},          // إزاحة العنوان لكل (اتجاه:شكل) بوحدات الغلاف: { 'portrait:card': {x, y} }
   editText: false,      // وضع تحريك النص بالماوس
+  sendOriginal: false,  // إرسال الصورة الأصلية (بالقالب) لقسم الإنتاج مع المصغرة؛ الافتراضي المصغرة فقط
   coverRender: null,    // آخر رسم لمعاينة الغلاف (حدود النص والإزاحة الفعلية)
   busy: false,
 };
@@ -890,7 +891,7 @@ function buildCard(item) {
   }));
   item.zoomInput.addEventListener('input', () => {
     const o = effectiveOrient(item);
-    const F = FORMATS[o];
+    const F = THUMB_FORMATS[o];
     item.crop[o].zoom = parseFloat(item.zoomInput.value);
     normalizeCrop(item, item.crop[o], F.w, F.h);
     drawCard(item);
@@ -914,7 +915,7 @@ function buildCard(item) {
 
   attachPan(item.canvas, () => {
     const o = effectiveOrient(item);
-    return { item, crop: item.crop[o], W: FORMATS[o].w, H: FORMATS[o].h, redraw: () => drawCard(item) };
+    return { item, crop: item.crop[o], W: THUMB_FORMATS[o].w, H: THUMB_FORMATS[o].h, redraw: () => drawCard(item) };
   });
   return el;
 }
@@ -989,13 +990,13 @@ function attachReorder(handle, item) {
 
 function drawCard(item) {
   const o = effectiveOrient(item);
-  const F = FORMATS[o];
+  const F = THUMB_FORMATS[o];
   const s = 600 / Math.max(F.w, F.h);
   const c = item.canvas;
   const cw = Math.round(F.w * s);
   const ch = Math.round(F.h * s);
   if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
-  renderRegular(c.getContext('2d'), item, o, s, item.preview);
+  renderRegular(c.getContext('2d'), item, o, s, item.preview, true);
 
   item.el.querySelectorAll('.seg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.o === o)));
   item.el.querySelector('.auto-tag').hidden = !(item.orient === 'auto' && state.globalOrient === 'auto');
@@ -1066,7 +1067,7 @@ function drawCoverPreview() {
   const item = coverItem();
   if (!item) return;
   const o = effectiveOrient(item);
-  const F = COVER_FORMATS[o];
+  const F = THUMB_COVER_FORMATS[o];
   const c = $('#coverCanvas');
   const wrap = $('#stageCanvasWrap');
   wrap.classList.toggle('is-portrait', o === 'portrait');
@@ -1076,7 +1077,7 @@ function drawCoverPreview() {
   const ch = Math.round(F.h * s);
   if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
   const ctx = c.getContext('2d');
-  const r = renderCover(ctx, item, o, state.style, s, item.preview);
+  const r = renderCover(ctx, item, o, state.style, s, item.preview, true);
   state.coverRender = r;
   if (state.editText && r.bounds) drawTextFrame(ctx, r, s);
   $('#coverZoom').value = item.coverCrop[o].zoom;
@@ -1157,7 +1158,7 @@ function drawGallery() {
   const item = coverItem();
   if (!item) return;
   const o = effectiveOrient(item);
-  const F = COVER_FORMATS[o];
+  const F = THUMB_COVER_FORMATS[o];
   $('#styleGallery').classList.toggle('is-portrait', o === 'portrait');
   const s = (o === 'landscape' ? 400 : 260) / F.w;
   document.querySelectorAll('.style-opt').forEach((b) => {
@@ -1165,7 +1166,7 @@ function drawGallery() {
     const cw = Math.round(F.w * s);
     const ch = Math.round(F.h * s);
     if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
-    renderCover(c.getContext('2d'), item, o, b.dataset.id, s, item.preview);
+    renderCover(c.getContext('2d'), item, o, b.dataset.id, s, item.preview, true);
   });
 }
 
@@ -1195,7 +1196,7 @@ function initCoverEditor() {
     const item = coverItem();
     if (!item) return;
     const o = effectiveOrient(item);
-    const F = COVER_FORMATS[o];
+    const F = THUMB_COVER_FORMATS[o];
     item.coverCrop[o].zoom = parseFloat(e.target.value);
     normalizeCrop(item, item.coverCrop[o], F.w, F.h);
     scheduleCover();
@@ -1217,7 +1218,7 @@ function initCoverEditor() {
   attachPan(canvas, () => {
     const item = coverItem();
     const o = effectiveOrient(item);
-    const F = COVER_FORMATS[o];
+    const F = THUMB_COVER_FORMATS[o];
     if (state.editText) {
       return { item, W: F.w, H: F.h, drag: (dx, dy) => moveText(o, dx, dy), redraw: scheduleCover, done: scheduleGallery };
     }
@@ -1246,7 +1247,7 @@ function initCoverEditor() {
     if (!item || !(e.ctrlKey || e.metaKey)) return;
     e.preventDefault();
     const o = effectiveOrient(item);
-    const F = COVER_FORMATS[o];
+    const F = THUMB_COVER_FORMATS[o];
     const crop = item.coverCrop[o];
     crop.zoom = clamp(crop.zoom * Math.exp(-e.deltaY * 0.0015), 0.5, 3);
     normalizeCrop(item, crop, F.w, F.h);
@@ -1283,7 +1284,7 @@ function refreshUI() {
   $('#coverEditor').hidden = !cover;
   if (cover) {
     const o = effectiveOrient(cover);
-    const F = COVER_FORMATS[o];
+    const F = THUMB_COVER_FORMATS[o];
     $('#coverInfo').textContent = `الصورة ${state.items.indexOf(cover) + 1} — غلاف ${FORMATS[o].label} ${F.w}×${F.h}`;
     scheduleCover();
     scheduleGallery();
@@ -1437,6 +1438,7 @@ function sendPhoto(chatId, blob, filename, caption) {
 async function sendAllToTelegram() {
   if (state.busy || !validateBeforeExport()) return;
   const { chatId, thumbChatId } = CONFIG.telegram;
+  const withOriginal = state.sendOriginal;
   setBusy(true);
   const outs = buildOutputs();
   const batch = { id: Date.now(), ts: Date.now(), entries: [] };
@@ -1448,8 +1450,6 @@ async function sendAllToTelegram() {
     try {
       setStatus(`جاري إرسال ${out.label} (${i + 1} من ${outs.length})…`);
       await sleep(20);
-      const full = renderOutput(out);
-      const blob = await canvasToBlob(full);
       // المجموعة الثانية: نفس الصورة بدون قالب (الطولي 1080×1920 كامل، والأفقي بعرض 770)
       const o = effectiveOrient(out.item);
       const T = (out.kind === 'cover' ? THUMB_COVER_FORMATS : THUMB_FORMATS)[o];
@@ -1457,8 +1457,12 @@ async function sendAllToTelegram() {
       const thumbBlob = await canvasToBlob(thumbCanvas, 0.92);
       const entry = { label: out.label, msgs: [] };
 
-      const main = await sendPhoto(chatId, blob, out.file, out.caption);
-      entry.msgs.push({ chat: chatId, id: main.message_id });
+      // قسم الإنتاج: الصورة الأصلية بالقالب، فقط إذا فعّل المستخدم الخيار
+      if (withOriginal) {
+        const blob = await canvasToBlob(renderOutput(out));
+        const main = await sendPhoto(chatId, blob, out.file, out.caption);
+        entry.msgs.push({ chat: chatId, id: main.message_id });
+      }
       const dims = `${thumbCanvas.width}×${thumbCanvas.height}`;
       const thumb = await sendPhoto(thumbChatId, thumbBlob, out.file.replace('.jpg', `-${thumbCanvas.width}x${thumbCanvas.height}.jpg`), `بدون قالب — ${out.label} (${dims})`);
       entry.msgs.push({ chat: thumbChatId, id: thumb.message_id });
@@ -1648,6 +1652,7 @@ async function init() {
   initCoverEditor();
   $('#btnDownload').addEventListener('click', downloadAll);
   $('#btnTelegram').addEventListener('click', sendAllToTelegram);
+  $('#chkSendOriginal').addEventListener('change', (e) => { state.sendOriginal = e.target.checked; });
   $('#btnClearLog').addEventListener('click', () => {
     if (!confirm('مسح السجل من هذا الجهاز؟ (الصور تبقى على تلغرام)')) return;
     writeLog([]);
