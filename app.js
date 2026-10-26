@@ -25,12 +25,8 @@ const COVER_FORMATS = {
   portrait:  { w: 1080, h: 1440 },
 };
 
-// نسخة المجموعة الثانية في تلغرام: الصورة بدون قالب، وهي أيضًا قياس المعاينة في الصفحة.
-// الطولي 1080×1920 (9:16) يُرسل بقياسه الكامل، والأفقي يُصغَّر لعرض 770 (sendW)
-const THUMB_FORMATS = {
-  landscape: { w: 1500, h: 1000, sendW: 770 },
-  portrait:  { w: 1080, h: 1920, sendW: 1080 },
-};
+// الغلاف الذي يُرسل للمجموعة الثانية في تلغرام، وهو أيضًا قياس معاينة الغلاف في الصفحة.
+// الطولي 1080×1920 (9:16) بقياسه الكامل، والأفقي يُصغَّر لعرض 770 (sendW)
 const THUMB_COVER_FORMATS = {
   landscape: { w: 1920, h: 1080, sendW: 770 },
   portrait:  { w: 1080, h: 1920, sendW: 1080 },
@@ -175,13 +171,12 @@ function effectiveOrient(item) {
 /* =====================================================================
    رسم الصورة العادية (صورة + قالب)
    ===================================================================== */
-// thumb=true: نسخة المجموعة الثانية — الصورة وحدها بدون القالب
-function renderRegular(ctx, item, orient, s, src, thumb = false) {
-  const F = thumb ? THUMB_FORMATS[orient] : FORMATS[orient];
+function renderRegular(ctx, item, orient, s, src) {
+  const F = FORMATS[orient];
   ctx.setTransform(s, 0, 0, s, 0, 0);
   ctx.clearRect(0, 0, F.w, F.h);
   drawPhoto(ctx, item, F.w, F.h, item.crop[orient], s, src);
-  if (!thumb) ctx.drawImage(ASSETS[orient], 0, 0, F.w, F.h);
+  ctx.drawImage(ASSETS[orient], 0, 0, F.w, F.h);
 }
 
 /* =====================================================================
@@ -891,7 +886,7 @@ function buildCard(item) {
   }));
   item.zoomInput.addEventListener('input', () => {
     const o = effectiveOrient(item);
-    const F = THUMB_FORMATS[o];
+    const F = FORMATS[o];
     item.crop[o].zoom = parseFloat(item.zoomInput.value);
     normalizeCrop(item, item.crop[o], F.w, F.h);
     drawCard(item);
@@ -915,7 +910,7 @@ function buildCard(item) {
 
   attachPan(item.canvas, () => {
     const o = effectiveOrient(item);
-    return { item, crop: item.crop[o], W: THUMB_FORMATS[o].w, H: THUMB_FORMATS[o].h, redraw: () => drawCard(item) };
+    return { item, crop: item.crop[o], W: FORMATS[o].w, H: FORMATS[o].h, redraw: () => drawCard(item) };
   });
   return el;
 }
@@ -990,13 +985,13 @@ function attachReorder(handle, item) {
 
 function drawCard(item) {
   const o = effectiveOrient(item);
-  const F = THUMB_FORMATS[o];
+  const F = FORMATS[o];
   const s = 600 / Math.max(F.w, F.h);
   const c = item.canvas;
   const cw = Math.round(F.w * s);
   const ch = Math.round(F.h * s);
   if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
-  renderRegular(c.getContext('2d'), item, o, s, item.preview, true);
+  renderRegular(c.getContext('2d'), item, o, s, item.preview);
 
   item.el.querySelectorAll('.seg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.o === o)));
   item.el.querySelector('.auto-tag').hidden = !(item.orient === 'auto' && state.globalOrient === 'auto');
@@ -1331,19 +1326,19 @@ function buildOutputs() {
   return outs;
 }
 
-// thumb=true: نسخة المجموعة الثانية بدون قالب (الطولي 1080×1920 = 9:16)
+// thumb=true (للغلاف فقط): قياس غلاف المجموعة الثانية (الطولي 1080×1920)
 function renderOutput(out, thumb = false) {
   const o = effectiveOrient(out.item);
   const F = out.kind === 'cover'
     ? (thumb ? THUMB_COVER_FORMATS : COVER_FORMATS)[o]
-    : (thumb ? THUMB_FORMATS : FORMATS)[o];
+    : FORMATS[o];
   const c = document.createElement('canvas');
   c.width = F.w;
   c.height = F.h;
   const ctx = c.getContext('2d');
   ctx.imageSmoothingQuality = 'high';
   if (out.kind === 'cover') renderCover(ctx, out.item, o, state.style, 1, out.item.img, thumb);
-  else renderRegular(ctx, out.item, o, 1, out.item.img, thumb);
+  else renderRegular(ctx, out.item, o, 1, out.item.img);
   return c;
 }
 
@@ -1452,21 +1447,21 @@ async function sendAllToTelegram() {
     try {
       setStatus(`جاري إرسال ${out.label} (${i + 1} من ${outs.length})…`);
       await sleep(20);
-      // المجموعة الثانية: نفس الصورة بدون قالب (الطولي 1080×1920 كامل، والأفقي بعرض 770)
-      const o = effectiveOrient(out.item);
-      const T = (out.kind === 'cover' ? THUMB_COVER_FORMATS : THUMB_FORMATS)[o];
-      const thumbCanvas = makeThumb(renderOutput(out, true), T.sendW);
-      const thumbBlob = await canvasToBlob(thumbCanvas, 0.92);
-
       // قسم الإنتاج: الصور بالقالب دائمًا؛ الغلاف الأصلي فقط إذا فعّل المستخدم الخيار
       if (out.kind === 'photo' || withCoverOriginal) {
         const blob = await canvasToBlob(renderOutput(out));
         const main = await sendPhoto(chatId, blob, out.file, out.caption);
         entry.msgs.push({ chat: chatId, id: main.message_id });
       }
-      const dims = `${thumbCanvas.width}×${thumbCanvas.height}`;
-      const thumb = await sendPhoto(thumbChatId, thumbBlob, out.file.replace('.jpg', `-${thumbCanvas.width}x${thumbCanvas.height}.jpg`), `بدون قالب — ${out.label} (${dims})`);
-      entry.msgs.push({ chat: thumbChatId, id: thumb.message_id });
+      // المجموعة الثانية: الغلاف فقط (الطولي 1080×1920، والأفقي بعرض 770)
+      if (out.kind === 'cover') {
+        const T = THUMB_COVER_FORMATS[effectiveOrient(out.item)];
+        const thumbCanvas = makeThumb(renderOutput(out, true), T.sendW);
+        const thumbBlob = await canvasToBlob(thumbCanvas, 0.92);
+        const dims = `${thumbCanvas.width}x${thumbCanvas.height}`;
+        const thumb = await sendPhoto(thumbChatId, thumbBlob, `00-cover-${dims}.jpg`, `${out.caption} (${dims.replace('x', '×')})`);
+        entry.msgs.push({ chat: thumbChatId, id: thumb.message_id });
+      }
 
       batch.entries.push(entry);
       saveBatch(batch);
