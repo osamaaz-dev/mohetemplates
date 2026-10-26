@@ -57,7 +57,7 @@ const state = {
   textScale: parseFloat(storageGet('mohe_text_scale', '1')) || 1,
   textPos: {},          // إزاحة العنوان لكل (اتجاه:شكل) بوحدات الغلاف: { 'portrait:card': {x, y} }
   editText: false,      // وضع تحريك النص بالماوس
-  sendOriginal: false,  // إرسال الصورة الأصلية (بالقالب) لقسم الإنتاج مع المصغرة؛ الافتراضي المصغرة فقط
+  sendCoverOriginal: false, // إرسال نسخة الغلاف الأصلية (1080×1440) لقسم الإنتاج مع الغلاف المصغر؛ الصور بالقالب تُرسل له دائمًا
   coverRender: null,    // آخر رسم لمعاينة الغلاف (حدود النص والإزاحة الفعلية)
   busy: false,
 };
@@ -1290,6 +1290,7 @@ function refreshUI() {
     scheduleGallery();
   }
 
+  $('#labCoverOriginal').hidden = !cover;
   const bar = $('#actionbar');
   bar.classList.toggle('is-shown', n > 0);
   $('#abSummary').textContent = n
@@ -1438,7 +1439,7 @@ function sendPhoto(chatId, blob, filename, caption) {
 async function sendAllToTelegram() {
   if (state.busy || !validateBeforeExport()) return;
   const { chatId, thumbChatId } = CONFIG.telegram;
-  const withOriginal = state.sendOriginal;
+  const withCoverOriginal = state.sendCoverOriginal;
   setBusy(true);
   const outs = buildOutputs();
   const batch = { id: Date.now(), ts: Date.now(), entries: [] };
@@ -1447,6 +1448,7 @@ async function sendAllToTelegram() {
 
   for (let i = 0; i < outs.length; i++) {
     const out = outs[i];
+    const entry = { label: out.label, msgs: [] };
     try {
       setStatus(`جاري إرسال ${out.label} (${i + 1} من ${outs.length})…`);
       await sleep(20);
@@ -1455,10 +1457,9 @@ async function sendAllToTelegram() {
       const T = (out.kind === 'cover' ? THUMB_COVER_FORMATS : THUMB_FORMATS)[o];
       const thumbCanvas = makeThumb(renderOutput(out, true), T.sendW);
       const thumbBlob = await canvasToBlob(thumbCanvas, 0.92);
-      const entry = { label: out.label, msgs: [] };
 
-      // قسم الإنتاج: الصورة الأصلية بالقالب، فقط إذا فعّل المستخدم الخيار
-      if (withOriginal) {
+      // قسم الإنتاج: الصور بالقالب دائمًا؛ الغلاف الأصلي فقط إذا فعّل المستخدم الخيار
+      if (out.kind === 'photo' || withCoverOriginal) {
         const blob = await canvasToBlob(renderOutput(out));
         const main = await sendPhoto(chatId, blob, out.file, out.caption);
         entry.msgs.push({ chat: chatId, id: main.message_id });
@@ -1471,6 +1472,8 @@ async function sendAllToTelegram() {
       saveBatch(batch);
     } catch (err) {
       console.error(out.label, err);
+      // إذا وصلت رسالة واحدة قبل الفشل نبقيها بالسجل حتى يمكن حذفها لاحقًا
+      if (entry.msgs.length) { batch.entries.push(entry); saveBatch(batch); }
       failed.push(`${out.label}: ${err && err.name === 'SecurityError' ? exportErrorText(err) : err.message}`);
     }
     setProgress((i + 1) / outs.length);
@@ -1652,7 +1655,7 @@ async function init() {
   initCoverEditor();
   $('#btnDownload').addEventListener('click', downloadAll);
   $('#btnTelegram').addEventListener('click', sendAllToTelegram);
-  $('#chkSendOriginal').addEventListener('change', (e) => { state.sendOriginal = e.target.checked; });
+  $('#chkCoverOriginal').addEventListener('change', (e) => { state.sendCoverOriginal = e.target.checked; });
   $('#btnClearLog').addEventListener('click', () => {
     if (!confirm('مسح السجل من هذا الجهاز؟ (الصور تبقى على تلغرام)')) return;
     writeLog([]);
