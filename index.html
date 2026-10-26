@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>دمج الصور مع القالب الرسمي</title>
-<link rel="stylesheet" href="app.css?v=5">
+<link rel="stylesheet" href="app.css?v=6">
 </head>
 <body>
 
@@ -70,7 +70,7 @@
     <div class="cover-empty" id="coverEmpty">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
       <p>اضغط <b>«اجعلها غلاف»</b> تحت الصورة التي تريدها غلافًا، ثم اكتب العنوان هنا.</p>
-      <p class="muted">الغلاف يطلع نسخة إضافية مع العنوان، والصورة نفسها تبقى بالقالب العادي كمان.</p>
+      <p class="muted">الغلاف يطلع نسخة إضافية مع العنوان، والصورة نفسها تبقى كما هي كمان.</p>
     </div>
 
     <div class="cover-editor" id="coverEditor" hidden>
@@ -133,7 +133,7 @@
   <section class="step step-log" id="logSection" hidden>
     <details id="logDetails">
       <summary>سجل الإرسال لتلغرام <span id="logCount"></span></summary>
-      <p class="muted">تقدر تحذف أي صورة أُرسلت خلال آخر 48 ساعة (تنحذف من المجموعتين).</p>
+      <p class="muted">تقدر تحذف أي صورة أُرسلت خلال آخر 48 ساعة (تنحذف من تلغرام).</p>
       <div id="logList"></div>
       <button type="button" class="btn btn-ghost btn-sm" id="btnClearLog">مسح السجل من هذا الجهاز</button>
     </details>
@@ -150,11 +150,15 @@
       <div class="ab-progress"><span id="abProgress"></span></div>
     </div>
     <div class="ab-buttons">
+      <label class="check ab-check" title="إذا فعّلتها تُرسل أيضًا الصورة الأصلية بالقالب (1080×1440) لقسم الإنتاج، وإلا تُرسل المصغرة فقط">
+        <input type="checkbox" id="chkSendOriginal">
+        <span>إرسال الأصلية (بالقالب) معها</span>
+      </label>
       <button type="button" class="btn btn-gold" id="btnDownload">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0 4.5-4.5M12 15l-4.5-4.5M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         تنزيل الصور
       </button>
-      <button type="button" class="btn btn-tg" id="btnTelegram" title="قسم الإنتاج: الصورة كاملة مع القالب — المجموعة الثانية: نفس الصورة بدون قالب (الطولية 1080×1920)">
+      <button type="button" class="btn btn-tg" id="btnTelegram" title="يرسل النسخة المصغرة بدون قالب للمجموعة الثانية (الطولية 1080×1920)؛ فعّل الخانة لإرسال الأصلية بالقالب لقسم الإنتاج معها">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 4 3 11l6 2m12-9-4 16-8-7m12-9L9 13m0 0v6l3-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         إرسال لتلغرام
       </button>
@@ -164,6 +168,6 @@
 
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>
