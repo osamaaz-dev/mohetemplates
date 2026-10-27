@@ -7,7 +7,7 @@ const CONFIG = {
   maxPhotos: 10,
   jpegQuality: 0.92,
   telegram: {
-    botToken: '8320697814:AAGq5UTVDyzTWnL1FmiKHomrgKst7ddVsFM',
+    botToken: '8320697814:AAHELbyqp_6TiTbcJ-yjTWXx1qW9ySbS3yk',
     chatId: '-1003557221315',     // قسم الإنتاج: الصور بالحجم الكامل مع القالب
     thumbChatId: '-5300103442',   // المجموعة الثانية (النسخ المصغرة): الصور بدون قالب كملفات، بدون الغلاف
   },
