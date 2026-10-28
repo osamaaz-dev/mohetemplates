@@ -9,7 +9,7 @@ const CONFIG = {
   telegram: {
     botToken: '8320697814:AAHELbyqp_6TiTbcJ-yjTWXx1qW9ySbS3yk',
     chatId: '-1003557221315',     // قسم الإنتاج: الصور بالحجم الكامل مع القالب
-    thumbChatId: '-5300103442',   // المجموعة الثانية (النسخ المصغرة): الصور بدون قالب كملفات، بدون الغلاف
+    thumbChatId: '-5300103442',   // المجموعة الثانية (النسخ المصغرة): الصور الأصلية كما رُفعت، كملفات، بدون الغلاف
   },
 };
 
@@ -174,13 +174,12 @@ function effectiveOrient(item) {
 /* =====================================================================
    رسم الصورة العادية (صورة + قالب)
    ===================================================================== */
-// clean=true: الصورة وحدها بدون القالب (نسخة المجموعة الثانية)
-function renderRegular(ctx, item, orient, s, src, clean = false) {
+function renderRegular(ctx, item, orient, s, src) {
   const F = FORMATS[orient];
   ctx.setTransform(s, 0, 0, s, 0, 0);
   ctx.clearRect(0, 0, F.w, F.h);
   drawPhoto(ctx, item, F.w, F.h, item.crop[orient], s, src);
-  if (!clean) ctx.drawImage(ASSETS[orient], 0, 0, F.w, F.h);
+  ctx.drawImage(ASSETS[orient], 0, 0, F.w, F.h);
 }
 
 /* =====================================================================
@@ -813,6 +812,7 @@ async function addFiles(fileList) {
       const item = {
         id: ++uid,
         name: file.name,
+        file,             // الملف الأصلي كما رُفع (يُرسل للمجموعة الثانية دون أي تعديل)
         url,
         img,
         iw: img.naturalWidth,
@@ -1329,8 +1329,7 @@ function buildOutputs() {
   return outs;
 }
 
-// clean=true (للصور فقط): بدون القالب
-function renderOutput(out, clean = false) {
+function renderOutput(out) {
   const o = effectiveOrient(out.item);
   const F = (out.kind === 'cover' ? COVER_FORMATS : FORMATS)[o];
   const c = document.createElement('canvas');
@@ -1339,7 +1338,7 @@ function renderOutput(out, clean = false) {
   const ctx = c.getContext('2d');
   ctx.imageSmoothingQuality = 'high';
   if (out.kind === 'cover') renderCover(ctx, out.item, o, state.style, 1, out.item.img);
-  else renderRegular(ctx, out.item, o, 1, out.item.img, clean);
+  else renderRegular(ctx, out.item, o, 1, out.item.img);
   return c;
 }
 
@@ -1449,10 +1448,9 @@ async function sendAllToTelegram() {
       const blob = await canvasToBlob(renderOutput(out));
       const main = await sendPhoto(chatId, blob, out.file, out.caption);
       entry.msgs.push({ chat: chatId, id: main.message_id });
-      // المجموعة الثانية: الصور فقط (بدون الغلاف) بدون قالب، كملفات
+      // المجموعة الثانية: الصور فقط (بدون الغلاف) بملفها الأصلي كما رُفع — بلا قص ولا تصغير ولا إعادة ضغط
       if (out.kind === 'photo') {
-        const cleanBlob = await canvasToBlob(renderOutput(out, true));
-        const doc = await sendDocument(thumbChatId, cleanBlob, out.file, `${out.caption} — بدون قالب`);
+        const doc = await sendDocument(thumbChatId, out.item.file, out.item.name, `${out.caption} — الأصلية`);
         entry.msgs.push({ chat: thumbChatId, id: doc.message_id });
       }
 
