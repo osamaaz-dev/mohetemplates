@@ -4,7 +4,7 @@
    الإعدادات
    ===================================================================== */
 const CONFIG = {
-  maxPhotos: 10,
+  maxPhotos: 25,
   jpegQuality: 0.92,
   telegram: {
     botToken: '8320697814:AAHELbyqp_6TiTbcJ-yjTWXx1qW9ySbS3yk',
@@ -116,21 +116,32 @@ const ICONS = {
 /* =====================================================================
    القص والتموضع
    crop = { zoom, cx, cy } ← (cx, cy) نقطة من الصورة (0..1) تقع في منتصف الإطار
+   free = true (الغلاف): zoom=1 يعني fit (الصورة كاملة داخل الإطار)، والتحريك حر بلا قيد الحواف
    ===================================================================== */
+const COVER_ZOOM_MAX = 5;
 function newCrop() { return { zoom: 1, cx: 0.5, cy: 0.5 }; }
+function newCoverCrop() { return { zoom: 1, cx: 0.5, cy: 0.5, free: true }; }
 
 function photoLayout(iw, ih, W, H, crop) {
-  const s = Math.max(W / iw, H / ih) * crop.zoom;
+  const base = crop.free ? Math.min(W / iw, H / ih) : Math.max(W / iw, H / ih);
+  const s = base * crop.zoom;
   const dw = iw * s;
   const dh = ih * s;
   let x = W / 2 - crop.cx * dw;
   let y = H / 2 - crop.cy * dh;
+  if (crop.free) return { x, y, dw, dh };
   x = dw >= W ? clamp(x, W - dw, 0) : (W - dw) / 2;
   y = dh >= H ? clamp(y, H - dh, 0) : (H - dh) / 2;
   return { x, y, dw, dh };
 }
 
 function normalizeCrop(item, crop, W, H) {
+  if (crop.free) {
+    // تحريك حر: يكفي أن يبقى منتصف الإطار فوق الصورة
+    crop.cx = clamp(crop.cx, 0, 1);
+    crop.cy = clamp(crop.cy, 0, 1);
+    return;
+  }
   const L = photoLayout(item.iw, item.ih, W, H, crop);
   crop.cx = (W / 2 - L.x) / L.dw;
   crop.cy = (H / 2 - L.y) / L.dh;
@@ -138,8 +149,8 @@ function normalizeCrop(item, crop, W, H) {
 
 function drawPhoto(ctx, item, W, H, crop, s, src) {
   const L = photoLayout(item.iw, item.ih, W, H, crop);
-  if (L.dw < W - 0.5 || L.dh < H - 0.5) {
-    // الصورة أصغر من الإطار: خلفية ضبابية من نفس الصورة
+  if (L.x > 0.5 || L.y > 0.5 || L.x + L.dw < W - 0.5 || L.y + L.dh < H - 0.5) {
+    // الصورة لا تغطي الإطار كله: خلفية ضبابية من نفس الصورة
     const base = Math.max(W / item.iw, H / item.ih);
     const bw = item.iw * base;
     const bh = item.ih * base;
@@ -792,7 +803,7 @@ async function addFiles(fileList) {
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   if (!files.length) { toast('اختر ملفات صور', 'error'); return; }
   const room = CONFIG.maxPhotos - state.items.length;
-  if (room <= 0) { toast(`الحد الأقصى ${CONFIG.maxPhotos} صور`, 'error'); return; }
+  if (room <= 0) { toast(`الحد الأقصى ${CONFIG.maxPhotos} صورة`, 'error'); return; }
   if (files.length > room) toast(`تمت إضافة ${room} صور فقط — الحد الأقصى ${CONFIG.maxPhotos}`, 'error');
 
   for (const file of files.slice(0, room)) {
@@ -808,7 +819,7 @@ async function addFiles(fileList) {
         ih: img.naturalHeight,
         orient: 'auto',
         crop: { landscape: newCrop(), portrait: newCrop() },
-        coverCrop: { landscape: newCrop(), portrait: newCrop() },
+        coverCrop: { landscape: newCoverCrop(), portrait: newCoverCrop() },
       };
       item.preview = makePreviewSource(img);
       state.items.push(item);
@@ -1193,7 +1204,7 @@ function initCoverEditor() {
   $('#btnCoverReset').addEventListener('click', () => {
     const item = coverItem();
     if (!item) return;
-    item.coverCrop[effectiveOrient(item)] = newCrop();
+    item.coverCrop[effectiveOrient(item)] = newCoverCrop();
     scheduleCover();
     scheduleGallery();
   });
@@ -1237,7 +1248,7 @@ function initCoverEditor() {
     const o = effectiveOrient(item);
     const F = COVER_FORMATS[o];
     const crop = item.coverCrop[o];
-    crop.zoom = clamp(crop.zoom * Math.exp(-e.deltaY * 0.0015), 0.5, 3);
+    crop.zoom = clamp(crop.zoom * Math.exp(-e.deltaY * 0.0015), 0.5, COVER_ZOOM_MAX);
     normalizeCrop(item, crop, F.w, F.h);
     scheduleCover();
     scheduleGallery();
