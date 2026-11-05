@@ -110,6 +110,7 @@ const ICONS = {
   grip: '<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></g></svg>',
   chevRight: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   chevLeft: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  sliders: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h8m4 0h4M4 17h2m4 0h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="14" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="8" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>',
   trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 };
 
@@ -147,6 +148,33 @@ function normalizeCrop(item, crop, W, H) {
   crop.cy = (H / 2 - L.y) / L.dh;
 }
 
+// ctx.filter غير مدعوم في Safari/iPhone: نحاكي التمويه بتصغير الصورة ثم تكبيرها بتنعيم
+const CAN_FILTER = (() => {
+  try { return 'filter' in CanvasRenderingContext2D.prototype; } catch { return false; }
+})();
+function drawBlurred(ctx, src, x, y, w, h, radius, s, useFilter = CAN_FILTER) {
+  if (useFilter) {
+    ctx.save();
+    ctx.filter = `blur(${Math.max(1, Math.round(radius * s))}px)`;
+    ctx.drawImage(src, x, y, w, h);
+    ctx.restore();
+    return;
+  }
+  const tw = Math.max(4, Math.round(w / Math.max(6, radius)));
+  const th = Math.max(4, Math.round(h / Math.max(6, radius)));
+  const t = document.createElement('canvas');
+  t.width = tw;
+  t.height = th;
+  const tx = t.getContext('2d');
+  tx.imageSmoothingQuality = 'high';
+  tx.drawImage(src, 0, 0, tw, th);
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(t, x, y, w, h);
+  ctx.restore();
+}
+
 function drawPhoto(ctx, item, W, H, crop, s, src) {
   const L = photoLayout(item.iw, item.ih, W, H, crop);
   if (L.x > 0.5 || L.y > 0.5 || L.x + L.dw < W - 0.5 || L.y + L.dh < H - 0.5) {
@@ -155,10 +183,7 @@ function drawPhoto(ctx, item, W, H, crop, s, src) {
     const bw = item.iw * base;
     const bh = item.ih * base;
     const over = 60;
-    ctx.save();
-    ctx.filter = `blur(${Math.max(1, Math.round(40 * s))}px)`;
-    ctx.drawImage(src, (W - bw) / 2 - over, (H - bh) / 2 - over, bw + over * 2, bh + over * 2);
-    ctx.restore();
+    drawBlurred(ctx, src, (W - bw) / 2 - over, (H - bh) / 2 - over, bw + over * 2, bh + over * 2, 40, s);
     ctx.fillStyle = 'rgba(6, 48, 42, 0.35)';
     ctx.fillRect(0, 0, W, H);
   }
@@ -778,12 +803,304 @@ function renderCover(ctx, item, orient, styleId, s, src) {
 }
 
 /* =====================================================================
+   تحسين الصور: إضاءة تلقائية + تدرّج أخضر خفيف + ضبط يدوي (عام ولكل صورة)
+   معالجة بكسلات بجداول بحث (LUT) على الكانفس، دون ctx.filter لأن Safari/iPhone لا يدعمه
+   ===================================================================== */
+const SMALL_MAX_SIDE = 900;     // مصدر معاينة بطاقات الصور
+const FX_EXPORT_MAX = 3600;     // أقصى ضلع عند معالجة الصورة للتصدير (يحمي ذاكرة الموبايل)
+const AUTO_GREEN = 55;          // قوة تدرّج الأخضر في الوضع التلقائي (0..100)
+const AUTO_TARGET = 0.47;       // متوسط الإضاءة المستهدف للتصحيح التلقائي
+
+const FX_KEYS = [
+  { key: 'brightness', label: 'السطوع', min: -100, max: 100 },
+  { key: 'contrast', label: 'التباين', min: -100, max: 100 },
+  { key: 'saturation', label: 'التشبّع', min: -100, max: 100 },
+  { key: 'warmth', label: 'الدفء', min: -100, max: 100 },
+  { key: 'green', label: 'الاخضرار', min: -50, max: 50 },
+  { key: 'shadows', label: 'الظلال', min: -100, max: 100 },
+  { key: 'highlights', label: 'الإضاءات العالية', min: -100, max: 100 },
+];
+const newAdj = () => {
+  const a = {};
+  FX_KEYS.forEach((k) => { a[k.key] = 0; });
+  return a;
+};
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+function loadFx() {
+  let saved = {};
+  try { saved = JSON.parse(storageGet('mohe_fx', '{}')) || {}; } catch { saved = {}; }
+  const adj = newAdj();
+  FX_KEYS.forEach((k) => {
+    const v = saved.adj && saved.adj[k.key];
+    if (typeof v === 'number') adj[k.key] = clamp(Math.round(v), k.min, k.max);
+  });
+  return { auto: saved.auto !== false, adj };
+}
+state.fx = loadFx();
+function saveFx() { storageSet('mohe_fx', JSON.stringify({ auto: state.fx.auto, adj: state.fx.adj })); }
+
+// الإعدادات الفعلية لصورة: التلقائي (عام أو خاص بالصورة) + مجموع الضبط العام والخاص
+function fxEffective(item) {
+  const auto = item.fx.auto === 'inherit' ? state.fx.auto : item.fx.auto === 'on';
+  const adj = {};
+  FX_KEYS.forEach((k) => { adj[k.key] = clamp(state.fx.adj[k.key] + item.fx.adj[k.key], -100, 100); });
+  return { auto, adj };
+}
+function fxKey(item) {
+  const e = fxEffective(item);
+  if (!e.auto && FX_KEYS.every((k) => !e.adj[k.key])) return '';
+  return (e.auto ? 'A' : '-') + FX_KEYS.map((k) => e.adj[k.key]).join(',');
+}
+
+// تحليل الإضاءة من نسخة صغيرة: نقطتا السواد/البياض وغاما لتقريب المتوسط من الهدف
+function fxAnalysis(item) {
+  if (item.fxAn) return item.fxAn;
+  const src = item.small;
+  const iw = src.naturalWidth || src.width;
+  const ih = src.naturalHeight || src.height;
+  const k = Math.min(1, 160 / Math.max(iw, ih));
+  const w = Math.max(1, Math.round(iw * k));
+  const h = Math.max(1, Math.round(ih * k));
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const cx = c.getContext('2d', { willReadFrequently: true });
+  cx.drawImage(src, 0, 0, w, h);
+  const d = cx.getImageData(0, 0, w, h).data;
+  const hist = new Float64Array(256);
+  let total = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    hist[(d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8]++;
+    total++;
+  }
+  const pct = (p) => {
+    let acc = 0;
+    for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc >= total * p) return i / 255; }
+    return 1;
+  };
+  const b = Math.min(pct(0.005), 0.05);
+  const wh = Math.max(pct(0.995), 0.85);
+  let mean = 0;
+  for (let i = 0; i < 256; i++) mean += clamp01((i / 255 - b) / (wh - b)) * hist[i];
+  mean = clamp(mean / Math.max(1, total), 0.06, 0.94);
+  // الرفع للصور الداكنة قوي، والخفض للفاتحة خفيف جداً (لا نغمّق غرفة مضيئة)
+  const g = 1 + (clamp(Math.log(AUTO_TARGET) / Math.log(mean), 0.62, 1.12) - 1) * 0.85;
+  item.fxAn = { b, w: wh, g };
+  return item.fxAn;
+}
+
+// ثلاثة جداول (R,G,B) تجمع: التلقائي ← السطوع ← الظلال/الإضاءات ← التباين ← الدفء ← تدرّج الأخضر
+function fxLuts(eff, an) {
+  const adj = eff.adj;
+  const gs = clamp(((eff.auto ? AUTO_GREEN : 0) + adj.green) / 100, 0, 1);
+  const gam = Math.pow(2, -(adj.brightness / 100) * 0.8);
+  const cf = 1 + (adj.contrast / 100) * 0.8;
+  const sh = (adj.shadows / 100) * 0.45;
+  const hi = (adj.highlights / 100) * 0.45;
+  const wm = adj.warmth / 100;
+  const R = new Uint8ClampedArray(256);
+  const G = new Uint8ClampedArray(256);
+  const B = new Uint8ClampedArray(256);
+  for (let v = 0; v < 256; v++) {
+    let x = v / 255;
+    if (eff.auto && an) {
+      x = clamp01((x - an.b) / (an.w - an.b));
+      x = Math.pow(x, an.g);
+    }
+    x = Math.pow(x, gam);
+    x += sh * 3 * x * (1 - x) * (1 - x) + hi * 3 * x * x * (1 - x);
+    x = clamp01((x - 0.5) * cf + 0.5);
+    // التدرّج الأخضر يؤثر على الظلال والوسطيات فقط، فتبقى الإضاءات العالية بيضاء بلا ميل سماوي
+    const inv = (1 - x) * (1 - x);
+    const mid = 4 * x * (1 - x);
+    R[v] = 255 * (x * (1 + 0.14 * wm) - gs * (0.05 * mid + 0.02 * inv));
+    G[v] = 255 * (x + gs * (0.05 * mid + 0.045 * inv));
+    B[v] = 255 * (x * (1 - 0.14 * wm) + gs * (-0.012 * mid + 0.02 * inv));
+  }
+  return [R, G, B];
+}
+
+function fxRender(base, eff, an, maxSide) {
+  const iw = base.naturalWidth || base.width;
+  const ih = base.naturalHeight || base.height;
+  const k = Math.min(1, maxSide / Math.max(iw, ih));
+  const w = Math.max(1, Math.round(iw * k));
+  const h = Math.max(1, Math.round(ih * k));
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const cx = c.getContext('2d', { willReadFrequently: true });
+  cx.imageSmoothingQuality = 'high';
+  cx.drawImage(base, 0, 0, w, h);
+  const img = cx.getImageData(0, 0, w, h);
+  const d = img.data;
+  const [R, G, B] = fxLuts(eff, an);
+  const sat = 1 + eff.adj.saturation / 100 + (eff.auto ? 0.06 : 0);
+  for (let i = 0; i < d.length; i += 4) {
+    const r = R[d[i]];
+    const g = G[d[i + 1]];
+    const b = B[d[i + 2]];
+    if (sat === 1) {
+      d[i] = r; d[i + 1] = g; d[i + 2] = b;
+    } else {
+      const l = 0.299 * r + 0.587 * g + 0.114 * b;
+      d[i] = l + (r - l) * sat;
+      d[i + 1] = l + (g - l) * sat;
+      d[i + 2] = l + (b - l) * sat;
+    }
+  }
+  cx.putImageData(img, 0, 0);
+  return c;
+}
+
+// مصدر الرسم لصورة: الأصلي إن لم يوجد تعديل، وإلا نسخة معالَجة (مخزّنة حسب الإعدادات)
+function getSrc(item, kind) {
+  const base = kind === 'small' ? item.small : kind === 'preview' ? item.preview : item.img;
+  const key = fxKey(item);
+  if (!key) return base;
+  const cache = item.fxCache || (item.fxCache = {});
+  const hit = cache[kind];
+  if (hit && hit.key === key) return hit.canvas;
+  const eff = fxEffective(item);
+  const canvas = fxRender(base, eff, eff.auto ? fxAnalysis(item) : null, kind === 'full' ? FX_EXPORT_MAX : Infinity);
+  cache[kind] = { key, canvas };
+  return canvas;
+}
+function releaseFull() {
+  state.items.forEach((i) => { if (i.fxCache) delete i.fxCache.full; });
+}
+
+// إعادة رسم متدرّجة: لا نعالج كل البطاقات في إطار واحد حتى لا يتجمّد الموبايل
+const fxQueue = new Set();
+let fxTimer = 0;
+let fxCoverDirty = false;
+function fxRefresh(items) {
+  items.forEach((it) => {
+    fxQueue.add(it);
+    if (it.id === state.coverId) fxCoverDirty = true;
+  });
+  if (!fxTimer) fxTimer = setTimeout(fxPump, 0);
+}
+function fxPump() {
+  fxTimer = 0;
+  const t0 = performance.now();
+  for (const item of fxQueue) {
+    fxQueue.delete(item);
+    if (!state.items.includes(item)) continue;
+    drawCard(item);
+    if (performance.now() - t0 > 12) break;
+  }
+  if (fxQueue.size) {
+    fxTimer = setTimeout(fxPump, 16);
+    return;
+  }
+  if (fxCoverDirty) {
+    fxCoverDirty = false;
+    scheduleCover();
+    scheduleGallery();
+  }
+}
+
+// منزلقات الضبط: تعدّل كائن adj مباشرة؛ النقر المزدوج يصفّر المنزلق
+function buildFxSliders(container, adj, onChange) {
+  container.innerHTML = '';
+  const rows = FX_KEYS.map((k) => {
+    const row = document.createElement('label');
+    row.className = 'fx-row';
+    row.innerHTML = '<span class="fx-label"></span><output class="fx-val"></output><input type="range" step="1">';
+    row.querySelector('.fx-label').textContent = k.label;
+    const input = row.querySelector('input');
+    const out = row.querySelector('output');
+    input.min = k.min;
+    input.max = k.max;
+    const show = () => {
+      input.value = adj[k.key];
+      out.textContent = adj[k.key] > 0 ? `+${adj[k.key]}` : String(adj[k.key]);
+    };
+    input.addEventListener('input', () => { adj[k.key] = parseInt(input.value, 10) || 0; show(); onChange(); });
+    input.addEventListener('dblclick', () => { adj[k.key] = 0; show(); onChange(); });
+    show();
+    container.appendChild(row);
+    return show;
+  });
+  return { sync: () => rows.forEach((show) => show()) };
+}
+
+function fxIsCustom(item) {
+  return item.fx.auto !== 'inherit' || FX_KEYS.some((k) => item.fx.adj[k.key] !== 0);
+}
+function updateFxBadge(item) {
+  item.el.querySelector('.fx-dot').hidden = !fxIsCustom(item);
+}
+
+function initCardFx(item) {
+  const el = item.el;
+  const btn = el.querySelector('.fx-btn');
+  const panel = el.querySelector('.fx-card');
+  const segBtns = panel.querySelectorAll('.fx-auto button');
+  const sl = buildFxSliders(panel.querySelector('.fx-sliders'), item.fx.adj, () => {
+    fxRefresh([item]);
+    updateFxBadge(item);
+  });
+  const syncAuto = () => segBtns.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.a === item.fx.auto)));
+  syncAuto();
+  segBtns.forEach((b) => b.addEventListener('click', () => {
+    item.fx.auto = b.dataset.a;
+    syncAuto();
+    fxRefresh([item]);
+    updateFxBadge(item);
+  }));
+  panel.querySelector('.fx-reset').addEventListener('click', () => {
+    item.fx.auto = 'inherit';
+    FX_KEYS.forEach((k) => { item.fx.adj[k.key] = 0; });
+    sl.sync();
+    syncAuto();
+    fxRefresh([item]);
+    updateFxBadge(item);
+  });
+  btn.addEventListener('click', () => {
+    const open = panel.hidden;
+    panel.hidden = !open;
+    btn.setAttribute('aria-expanded', String(open));
+    el.classList.toggle('fx-open', open);
+  });
+}
+
+function initFx() {
+  const chk = $('#fxAuto');
+  chk.checked = state.fx.auto;
+  chk.addEventListener('change', () => {
+    state.fx.auto = chk.checked;
+    saveFx();
+    fxRefresh(state.items);
+  });
+  const sl = buildFxSliders($('#fxSliders'), state.fx.adj, () => {
+    saveFx();
+    fxRefresh(state.items);
+  });
+  $('#fxReset').addEventListener('click', () => {
+    FX_KEYS.forEach((k) => { state.fx.adj[k.key] = 0; });
+    sl.sync();
+    saveFx();
+    fxRefresh(state.items);
+  });
+  const body = $('#fxBody');
+  const toggle = $('#fxToggle');
+  toggle.addEventListener('click', () => {
+    const open = body.hidden;
+    body.hidden = !open;
+    toggle.setAttribute('aria-expanded', String(open));
+  });
+}
+
+/* =====================================================================
    إضافة الصور
    ===================================================================== */
-function makePreviewSource(img) {
+function makePreviewSource(img, maxSide = PREVIEW_MAX_SIDE) {
   const iw = img.naturalWidth;
   const ih = img.naturalHeight;
-  const k = Math.min(1, PREVIEW_MAX_SIDE / Math.max(iw, ih));
+  const k = Math.min(1, maxSide / Math.max(iw, ih));
   if (k === 1) return img;
   const c = document.createElement('canvas');
   c.width = Math.round(iw * k);
@@ -822,6 +1139,8 @@ async function addFiles(fileList) {
         coverCrop: { landscape: newCoverCrop(), portrait: newCoverCrop() },
       };
       item.preview = makePreviewSource(img);
+      item.small = makePreviewSource(img, SMALL_MAX_SIDE);
+      item.fx = { auto: 'inherit', adj: newAdj() };
       state.items.push(item);
       $('#grid').appendChild(buildCard(item));
       drawCard(item);
@@ -872,6 +1191,16 @@ function buildCard(item) {
         <input type="range" min="0.5" max="3" step="0.01" value="1" aria-label="تكبير">
         <span aria-hidden="true">+</span>
       </div>
+      <button type="button" class="fx-btn" aria-expanded="false">${ICONS.sliders}<span>تعديل الصورة</span><i class="fx-dot" hidden></i></button>
+      <div class="fx-card" hidden>
+        <div class="seg fx-auto" role="group" aria-label="التحسين التلقائي لهذه الصورة">
+          <button type="button" data-a="inherit">حسب الإعداد العام</button>
+          <button type="button" data-a="on">مفعّل</button>
+          <button type="button" data-a="off">متوقف</button>
+        </div>
+        <div class="fx-sliders"></div>
+        <button type="button" class="btn btn-ghost btn-sm fx-reset">إعادة ضبط الصورة</button>
+      </div>
       <div class="card-row">
         <button type="button" class="btn-cover">${ICONS.star}<span>اجعلها غلاف</span></button>
         <button type="button" class="icon-btn reset" title="إعادة الكادر" aria-label="إعادة الكادر">${ICONS.reset}</button>
@@ -903,6 +1232,7 @@ function buildCard(item) {
   el.querySelector('.move-prev').addEventListener('click', () => moveItem(item, -1));
   el.querySelector('.move-next').addEventListener('click', () => moveItem(item, 1));
   attachReorder(el.querySelector('.grip'), item);
+  initCardFx(item);
   el.querySelector('.btn-cover').addEventListener('click', () => {
     state.coverId = state.coverId === item.id ? null : item.id;
     refreshUI();
@@ -995,7 +1325,7 @@ function drawCard(item) {
   const cw = Math.round(F.w * s);
   const ch = Math.round(F.h * s);
   if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
-  renderRegular(c.getContext('2d'), item, o, s, item.preview);
+  renderRegular(c.getContext('2d'), item, o, s, getSrc(item, 'small'));
 
   item.el.querySelectorAll('.seg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.o === o)));
   item.el.querySelector('.auto-tag').hidden = !(item.orient === 'auto' && state.globalOrient === 'auto');
@@ -1076,7 +1406,7 @@ function drawCoverPreview() {
   const ch = Math.round(F.h * s);
   if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
   const ctx = c.getContext('2d');
-  const r = renderCover(ctx, item, o, state.style, s, item.preview, true);
+  const r = renderCover(ctx, item, o, state.style, s, getSrc(item, 'preview'), true);
   state.coverRender = r;
   if (state.editText && r.bounds) drawTextFrame(ctx, r, s);
   $('#coverZoom').value = item.coverCrop[o].zoom;
@@ -1165,7 +1495,7 @@ function drawGallery() {
     const cw = Math.round(F.w * s);
     const ch = Math.round(F.h * s);
     if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
-    renderCover(c.getContext('2d'), item, o, b.dataset.id, s, item.preview, true);
+    renderCover(c.getContext('2d'), item, o, b.dataset.id, s, getSrc(item, 'preview'), true);
   });
 }
 
@@ -1266,6 +1596,7 @@ function refreshUI() {
 
   $('#dropzone').classList.toggle('is-compact', n > 0);
   $('#photosToolbar').hidden = n === 0;
+  $('#fxPanel').hidden = n === 0;
   $('#stepCover').hidden = n === 0;
   $('#photoCount').textContent = n ? `${n} من ${CONFIG.maxPhotos}` : '';
   $('#dropzone strong').textContent = n ? 'إضافة صور أخرى' : 'اسحب الصور إلى هنا أو اضغط للاختيار';
@@ -1338,8 +1669,8 @@ function renderOutput(out, clean = false) {
   c.height = F.h;
   const ctx = c.getContext('2d');
   ctx.imageSmoothingQuality = 'high';
-  if (out.kind === 'cover') renderCover(ctx, out.item, o, state.style, 1, out.item.img);
-  else renderRegular(ctx, out.item, o, 1, out.item.img, clean);
+  if (out.kind === 'cover') renderCover(ctx, out.item, o, state.style, 1, getSrc(out.item, 'full'));
+  else renderRegular(ctx, out.item, o, 1, getSrc(out.item, 'full'), clean);
   return c;
 }
 
@@ -1356,6 +1687,7 @@ function validateBeforeExport() {
 
 function setBusy(busy) {
   state.busy = busy;
+  if (!busy) releaseFull();
   updateButtons();
 }
 
@@ -1641,6 +1973,7 @@ function initUpload() {
 async function init() {
   initUpload();
   initCoverEditor();
+  initFx();
   $('#btnDownload').addEventListener('click', downloadAll);
   $('#btnTelegram').addEventListener('click', sendAllToTelegram);
   $('#btnClearLog').addEventListener('click', () => {
