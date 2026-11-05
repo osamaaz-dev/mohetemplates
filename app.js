@@ -5,10 +5,10 @@
    ===================================================================== */
 const CONFIG = {
   maxPhotos: 25,
-  jpegQuality: 0.92,
+  jpegQuality: 0.95,
   telegram: {
     botToken: '8320697814:AAHELbyqp_6TiTbcJ-yjTWXx1qW9ySbS3yk',
-    chatId: '-1003557221315',     // قسم الإنتاج: الصور بالحجم الكامل مع القالب
+    chatId: '-1003557221315',     // قسم الإنتاج: الصور بالحجم الكامل مع القالب، كملفات (بدون ضغط تلغرام)
     thumbChatId: '-5300103442',   // المجموعة الثانية (النسخ المصغرة): الصور بدون قالب كملفات، بدون الغلاف
   },
 };
@@ -1745,13 +1745,6 @@ async function tgCall(method, body) {
   throw new Error('تعذّر الإرسال بعد عدة محاولات');
 }
 
-function sendPhoto(chatId, blob, filename, caption) {
-  const fd = new FormData();
-  fd.append('chat_id', chatId);
-  fd.append('photo', blob, filename);
-  if (caption) fd.append('caption', caption.slice(0, 1000));
-  return tgCall('sendPhoto', fd);
-}
 
 // إرسال كملف (بدون ضغط تلغرام، بالقياس الكامل)
 function sendDocument(chatId, blob, filename, caption) {
@@ -1777,9 +1770,9 @@ async function sendAllToTelegram() {
     try {
       setStatus(`جاري إرسال ${out.label} (${i + 1} من ${outs.length})…`);
       await sleep(20);
-      // قسم الإنتاج: كل شيء (الغلاف + الصور بالقالب) كصور
+      // قسم الإنتاج: كل شيء (الغلاف + الصور بالقالب) كملفات، لأن تلغرام يضغط «الصور» ويصغّرها إلى ~1280px
       const blob = await canvasToBlob(renderOutput(out));
-      const main = await sendPhoto(chatId, blob, out.file, out.caption);
+      const main = await sendDocument(chatId, blob, out.file, out.caption);
       entry.msgs.push({ chat: chatId, id: main.message_id });
       // المجموعة الثانية: الصور فقط (بدون الغلاف) بدون قالب، كملفات
       if (out.kind === 'photo') {
