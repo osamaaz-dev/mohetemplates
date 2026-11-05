@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>دمج الصور مع القالب الرسمي</title>
-<link rel="stylesheet" href="app.css?v=13">
+<link rel="stylesheet" href="app.css?v=14">
 </head>
 <body>
 
@@ -170,6 +170,13 @@
       <span id="abStatus" class="ab-status"></span>
       <div class="ab-progress"><span id="abProgress"></span></div>
     </div>
+    <div class="ab-res" id="abRes" role="group" aria-label="دقة التصدير">
+      <span class="ab-res-label">الدقة</span>
+      <div class="seg">
+        <button type="button" data-k="1" aria-pressed="true">عادية</button>
+        <button type="button" data-k="2" aria-pressed="false">مضاعفة ×2</button>
+      </div>
+    </div>
     <div class="ab-buttons">
       <button type="button" class="btn btn-gold" id="btnDownload">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0 4.5-4.5M12 15l-4.5-4.5M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -185,6 +192,6 @@
 
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="app.js?v=13"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>

@@ -497,6 +497,8 @@ body.is-reordering, body.is-reordering * { cursor: grabbing !important; user-sel
 .ab-status.is-error { color: #ffb4ab; opacity: 1; }
 .ab-progress { height: 6px; background: rgba(255, 255, 255, 0.14); border-radius: 99px; overflow: hidden; }
 .ab-progress span { display: block; height: 100%; width: 0; background: var(--gold); border-radius: 99px; transition: width 0.25s; }
+.ab-res { display: flex; align-items: center; gap: 8px; flex: none; }
+.ab-res-label { font-size: 14px; opacity: 0.85; }
 .ab-buttons { display: flex; align-items: center; gap: 10px; }
 .ab-buttons .btn { padding: 11px 20px; font-size: 16px; }
 
