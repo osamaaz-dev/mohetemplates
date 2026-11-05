@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>دمج الصور مع القالب الرسمي</title>
-<link rel="stylesheet" href="app.css?v=10">
+<link rel="stylesheet" href="app.css?v=12">
 </head>
 <body>
 
@@ -53,6 +53,27 @@
       <div class="toolbar-group">
         <span class="toolbar-hint">اسحب الصورة لتحريك الكادر، واسحب ⠿ لتغيير الترتيب</span>
         <button type="button" class="btn btn-ghost" id="btnClearAll">حذف كل الصور</button>
+      </div>
+    </div>
+
+    <div class="fx" id="fxPanel" hidden>
+      <div class="fx-head">
+        <label class="switch">
+          <input type="checkbox" id="fxAuto">
+          <span class="switch-ui" aria-hidden="true"></span>
+          <span class="switch-text">
+            <strong>تحسين تلقائي</strong>
+            <small>يصحّح الإضاءة ويضيف تدرّجًا أخضر خفيفًا لكل الصور</small>
+          </span>
+        </label>
+        <button type="button" class="btn btn-ghost btn-sm" id="fxToggle" aria-expanded="false" aria-controls="fxBody">ضبط يدوي لكل الصور</button>
+      </div>
+      <div class="fx-body" id="fxBody" hidden>
+        <div class="fx-sliders" id="fxSliders"></div>
+        <div class="fx-foot">
+          <span class="muted">اضغط مرتين على أي منزلق لتصفيره. ولكل صورة زر «تعديل الصورة» بإعدادات خاصة تُضاف فوق هذه.</span>
+          <button type="button" class="btn btn-ghost btn-sm" id="fxReset">إعادة الضبط</button>
+        </div>
       </div>
     </div>
 
@@ -164,6 +185,6 @@
 
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="app.js?v=10"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>
