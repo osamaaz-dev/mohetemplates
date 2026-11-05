@@ -48,6 +48,7 @@ const state = {
   editText: false,      // وضع تحريك النص بالماوس
   coverRender: null,    // آخر رسم لمعاينة الغلاف (حدود النص والإزاحة الفعلية)
   busy: false,
+  exportScale: storageGet('mohe_scale', '1') === '2' ? 2 : 1,   // دقة التصدير: 1 عادية، 2 مضاعفة
 };
 const ASSETS = {};
 let assetsReady = null;
@@ -205,7 +206,9 @@ function renderRegular(ctx, item, orient, s, src, clean = false) {
   ctx.setTransform(s, 0, 0, s, 0, 0);
   ctx.clearRect(0, 0, F.w, F.h);
   drawPhoto(ctx, item, F.w, F.h, item.crop[orient], s, src);
-  if (!clean) ctx.drawImage(ASSETS[orient], 0, 0, F.w, F.h);
+  // في التصدير المضاعف نستعمل قالب @2x الحاد بدل تكبير القالب العادي
+  const tpl = (s >= 1.5 && ASSETS[`${orient}2x`]) || ASSETS[orient];
+  if (!clean) ctx.drawImage(tpl, 0, 0, F.w, F.h);
 }
 
 /* =====================================================================
@@ -1664,13 +1667,14 @@ function buildOutputs() {
 function renderOutput(out, clean = false) {
   const o = effectiveOrient(out.item);
   const F = (out.kind === 'cover' ? COVER_FORMATS : FORMATS)[o];
+  const k = state.exportScale;
   const c = document.createElement('canvas');
-  c.width = F.w;
-  c.height = F.h;
+  c.width = F.w * k;
+  c.height = F.h * k;
   const ctx = c.getContext('2d');
   ctx.imageSmoothingQuality = 'high';
-  if (out.kind === 'cover') renderCover(ctx, out.item, o, state.style, 1, getSrc(out.item, 'full'));
-  else renderRegular(ctx, out.item, o, 1, getSrc(out.item, 'full'), clean);
+  if (out.kind === 'cover') renderCover(ctx, out.item, o, state.style, k, getSrc(out.item, 'full'));
+  else renderRegular(ctx, out.item, o, k, getSrc(out.item, 'full'), clean);
   return c;
 }
 
@@ -1691,11 +1695,34 @@ function setBusy(busy) {
   updateButtons();
 }
 
+/* دقة التصدير: عادية (القياس الثابت للقالب) أو مضاعفة ×2 بقوالب @2x حادة */
+const RES_HINT = 'دقة مضاعفة: أفقي 3000×2000 · طولي 2160×2880 · الغلاف 3840×2160 أو 2160×3840 (الملف أكبر والتجهيز أبطأ)';
+async function ensureHires() {
+  if (state.exportScale < 2) return;
+  const need = { landscape2x: 'templates/landscape@2x.png', portrait2x: 'templates/portrait@2x.png' };
+  for (const [key, src] of Object.entries(need)) {
+    if (ASSETS[key]) continue;
+    try { ASSETS[key] = await loadImage(src); } catch { toast('تعذّر تحميل قالب الدقة المضاعفة؛ سيُستعمل القالب العادي', 'error'); }
+  }
+}
+function initResolution() {
+  const btns = document.querySelectorAll('#abRes button');
+  const sync = () => btns.forEach((b) => b.setAttribute('aria-pressed', String(parseInt(b.dataset.k, 10) === state.exportScale)));
+  sync();
+  btns.forEach((b) => b.addEventListener('click', () => {
+    state.exportScale = parseInt(b.dataset.k, 10) === 2 ? 2 : 1;
+    storageSet('mohe_scale', String(state.exportScale));
+    sync();
+    if (!state.busy) setStatus(state.exportScale === 2 ? RES_HINT : '');
+  }));
+}
+
 async function downloadAll() {
   if (state.busy || !validateBeforeExport()) return;
   setBusy(true);
   const outs = buildOutputs();
   setProgress(0);
+  await ensureHires();
   try {
     for (let i = 0; i < outs.length; i++) {
       setStatus(`جاري تجهيز ${outs[i].label} (${i + 1} من ${outs.length})…`);
@@ -1763,6 +1790,7 @@ async function sendAllToTelegram() {
   const batch = { id: Date.now(), ts: Date.now(), entries: [] };
   const failed = [];
   setProgress(0);
+  await ensureHires();
 
   for (let i = 0; i < outs.length; i++) {
     const out = outs[i];
@@ -1967,6 +1995,7 @@ async function init() {
   initUpload();
   initCoverEditor();
   initFx();
+  initResolution();
   $('#btnDownload').addEventListener('click', downloadAll);
   $('#btnTelegram').addEventListener('click', sendAllToTelegram);
   $('#btnClearLog').addEventListener('click', () => {
